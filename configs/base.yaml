@@ -1,0 +1,25 @@
+seed: 42
+env:
+  id: predator_prey_v0
+  grid_size: 7
+  n_predators: 2
+  n_prey: 2
+  max_steps: 200
+train:
+  algo: ppo
+  total_episodes: 500
+  gamma: 0.99
+  lr: 3.0e-4
+  batch_size: 2048
+  update_epochs: 4
+  clip_coef: 0.2
+  ent_coef: 0.01
+  vf_coef: 0.5
+logging:
+  save_dir: artifacts/
+  csv: true
+  plots: true
+  plot_every: 50
+recording:
+  enabled: false
+  sample_rate: 1
