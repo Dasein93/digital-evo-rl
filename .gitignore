@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+.ipynb_checkpoints/
+artifacts/
+checkpoints/
+*.mp4
+*.gif
+*.npz
+*.jsonl
+*.csv
+plots/
+.DS_Store
+.idea/
+.vscode/
