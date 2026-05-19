@@ -24,6 +24,26 @@ def set_seed(seed: int) -> None:
         torch.cuda.manual_seed_all(seed)
 
 
+def set_num_threads(n: int | None) -> int:
+    """Cap CPU threads to ``n`` (None = leave PyTorch's default alone).
+
+    On low-core CPU boxes (e.g. a 2-vCPU VPS) PyTorch's default of grabbing
+    every visible core thrashes the system. Setting threads=cores keeps the
+    box responsive to SSH and other work.
+    """
+    if n is None:
+        return torch.get_num_threads()
+    torch.set_num_threads(int(n))
+    try:
+        torch.set_num_interop_threads(int(n))
+    except RuntimeError:
+        # set_num_interop_threads can only be called once before any parallel
+        # work has happened; we silently swallow the second-call error so
+        # repeated calls (e.g. from tests) don't crash.
+        pass
+    return torch.get_num_threads()
+
+
 def flatten_obs(obs_dict: Dict[str, np.ndarray]) -> Tuple[List[np.ndarray], List[str]]:
     """Normalize a ``{agent: obs}`` dict to a list of per-agent flat arrays.
 

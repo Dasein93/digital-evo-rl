@@ -50,6 +50,50 @@ def test_coevolve_runs_two_generations(trained_ckpt: Path, tmp_path: Path):
     assert len(summary["history"]) == 4  # 2 gens x 2 teams
 
 
+def test_coevolve_resume_continues_from_last_gen(trained_ckpt: Path, tmp_path: Path):
+    """Run 2 gens, then re-invoke with --resume + larger N — only the new gens execute."""
+    from train.tools.coevolve import coevolve
+    from agents.qd import MAPElitesConfig
+    out = tmp_path / "coev_resume"
+    kwargs = dict(
+        seed_ckpt_dir=str(trained_ckpt), out_dir=str(out),
+        n_mutants=2, sigma=0.3, eval_eps=1,
+        n_predators=1, n_prey=1, n_obstacles=0, max_cycles=12,
+        seed=33, device="cpu",
+        qd_cfg=MAPElitesConfig(grid_shape=(3, 3)),
+    )
+    s1 = coevolve(generations=2, **kwargs)
+    assert s1["generations"] == 2
+    # Resume to gen 4 — gens 1-2 should be reused, gens 3-4 executed.
+    s2 = coevolve(generations=4, resume=True, **kwargs)
+    assert s2["generations"] == 4
+    # History should have 4 gens × 2 teams = 8 records.
+    assert len(s2["history"]) == 8
+    for g in (1, 2, 3, 4):
+        assert (out / f"gen_{g:03d}" / "champion_checkpoint" / "manifest.json").exists()
+
+
+def test_coevolve_with_workers_matches_serial(trained_ckpt: Path, tmp_path: Path):
+    """Parallel mutant eval should produce equivalent fitness rankings to serial.
+
+    We don't require *identical* numbers (RNG/process ordering differs) — just
+    that both modes complete and produce non-empty history.
+    """
+    from train.tools.coevolve import coevolve
+    from agents.qd import MAPElitesConfig
+    base_kwargs = dict(
+        seed_ckpt_dir=str(trained_ckpt),
+        generations=1, n_mutants=4, sigma=0.3, eval_eps=1,
+        n_predators=1, n_prey=1, n_obstacles=0, max_cycles=10,
+        seed=44, device="cpu",
+        qd_cfg=MAPElitesConfig(grid_shape=(3, 3)),
+    )
+    s_serial = coevolve(out_dir=str(tmp_path / "serial"), workers=1, **base_kwargs)
+    s_par = coevolve(out_dir=str(tmp_path / "parallel"), workers=2, **base_kwargs)
+    assert len(s_serial["history"]) == 2  # 1 gen x 2 teams
+    assert len(s_par["history"]) == 2
+
+
 def test_report_bundles_artifacts(trained_ckpt: Path, tmp_path: Path):
     """Report should be one self-contained HTML file with embedded images + JSON blocks."""
     from train.tools.report import build_report

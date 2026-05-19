@@ -1,13 +1,15 @@
-.PHONY: help venv test smoke run_cpu preview clean
+.PHONY: help venv test smoke run_cpu preview coevolve_demo vps_deploy clean
 export SDL_VIDEODRIVER ?= dummy
 
 help:
-	@echo "make venv     - create local venv and install requirements"
-	@echo "make test     - run pytest under SDL=dummy"
-	@echo "make smoke    - run a 3-episode end-to-end via configs/smoke.yaml"
-	@echo "make run_cpu  - run full CPU training via configs/base.yaml"
-	@echo "make preview  - train baseline + novelty preview configs (~40s)"
-	@echo "make clean    - remove cache/build artifacts"
+	@echo "make venv          - create local venv and install requirements"
+	@echo "make test          - run pytest under SDL=dummy"
+	@echo "make smoke         - run a 3-episode end-to-end via configs/smoke.yaml"
+	@echo "make run_cpu       - run full CPU training via configs/base.yaml"
+	@echo "make preview       - train baseline + novelty preview configs (~40s)"
+	@echo "make coevolve_demo - full pipeline: train seed -> 4-gen coevolve -> HTML report"
+	@echo "make vps_deploy    - bootstrap on VPS (override: VPS_HOST=... PROJ=...)"
+	@echo "make clean         - remove cache/build artifacts"
 
 venv:
 	python3 -m venv .venv && . .venv/bin/activate && pip install -U pip && pip install -r requirements.txt
@@ -34,6 +36,9 @@ coevolve_demo:
 			--sigma 0.2 --n_predators 2 --n_prey 2 --n_obstacles 2 --max_cycles 80
 	python -m train.tools.report --dir artifacts/coevolve_demo/coev \
 		--out artifacts/coevolve_demo/report.html
+
+vps_deploy:
+	./scripts/vps_bootstrap.sh
 
 clean:
 	rm -rf __pycache__ .pytest_cache **/__pycache__

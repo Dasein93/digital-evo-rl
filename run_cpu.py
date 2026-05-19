@@ -31,7 +31,7 @@ from agents.checkpoint import save_checkpoint
 from agents.novelty import BehaviorCharacteristic, NoveltyArchive
 from agents.qd import MAPElitesArchive, MAPElitesConfig
 from envs.predator_prey import make_env, reset as env_reset, step as env_step, team_of, TEAM_PREDATOR, TEAM_PREY
-from train.ppo import PPO, PPOConfig, flatten_obs, set_seed, empty_rollout, append_step
+from train.ppo import PPO, PPOConfig, flatten_obs, set_seed, set_num_threads, empty_rollout, append_step
 from train.tools.plots import archive_heatmap
 from train.tools.recorder import TrajectoryRecorder
 
@@ -89,12 +89,16 @@ def main(
     save_dir: str | None = None,
     device_override: str | None = None,
     seed_override: int | None = None,
+    num_threads: int | None = None,
 ) -> str:
     with open(cfg_path, "r") as f:
         cfg = yaml.safe_load(f)
 
     seed = int(seed_override) if seed_override is not None else int(cfg.get("seed", 42))
     set_seed(seed)
+    threads_cfg = num_threads if num_threads is not None else cfg.get("train", {}).get("num_threads")
+    if threads_cfg is not None:
+        set_num_threads(int(threads_cfg))
 
     env_cfg = cfg.get("env", {})
     max_steps = int(env_cfg.get("max_steps", 200))
@@ -391,5 +395,6 @@ if __name__ == "__main__":
     ap.add_argument("--save_dir", type=str, default=None)
     ap.add_argument("--device", type=str, default=None, help="cpu | cuda | mps | auto (overrides config)")
     ap.add_argument("--seed", type=int, default=None, help="overrides the seed in the config (lets sweep vary it)")
+    ap.add_argument("--num_threads", type=int, default=None, help="cap PyTorch CPU threads (use ~ncores on small VPS)")
     args = ap.parse_args()
-    main(args.config, args.episodes, args.save_dir, args.device, args.seed)
+    main(args.config, args.episodes, args.save_dir, args.device, args.seed, args.num_threads)

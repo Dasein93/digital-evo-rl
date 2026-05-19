@@ -9,8 +9,8 @@ Python-first project to explore **predator–prey** dynamics with **multi-agent 
 - **(Optional):** Jules for repo-wide PRs
 
 ## Project Status
-- **Phase:** 6 — Co-evolutionary arms race + obstacles in env + self-contained HTML report bundler + real seed override
-- **Next Up:** Colab GPU run with bigger generations / populations; per-cell elites tournament; curriculum scheduling
+- **Phase:** 7 — Parallel mutant evaluation, `--resume` for multi-day runs, VPS deployment scripts
+- **Next Up:** Hall-of-Fame eval (test new champions against historical opponents to detect cycling); per-layer mutation sigma; Colab GPU vectorized envs
 - **Last Run:** see `docs/run_log.md`
 
 ## Structure
@@ -117,8 +117,26 @@ heatmap (gen-i predator vs gen-j prey) so the arms race is visible:
 python -m train.tools.coevolve \
   --seed_ckpt artifacts/<run>/checkpoints/final \
   --out artifacts/coev --generations 4 --n_mutants 20 --sigma 0.2 \
-  --n_predators 2 --n_prey 2 --n_obstacles 2 --max_cycles 100
+  --n_predators 2 --n_prey 2 --n_obstacles 2 --max_cycles 100 \
+  --workers 2 --num_threads 1                  # parallel; tune to n_cores
+# add --resume to continue from the highest finished gen_NNN in --out
 ```
+
+### VPS deployment (Phase 7)
+Bootstrap a CPU-only deploy from your Mac in one command:
+```bash
+VPS_HOST=stepan-vps ./scripts/vps_bootstrap.sh
+```
+It rsyncs the repo, installs CPU-only PyTorch + SDL2 system libs, and
+runs `pytest -q` on the box. Then start a detached multi-day run that
+auto-resumes after crashes:
+```bash
+ssh stepan-vps "cd /opt/digital-evo-rl && \
+  GENERATIONS=50 N_MUTANTS=30 tmux new-session -d -s evo \
+  './scripts/run_worker.sh'"
+ssh stepan-vps "tail -F /opt/digital-evo-rl/logs/coevolve.log"
+```
+See `docs/vps.md` for tuning + the full knob list.
 
 ### Self-contained HTML report
 Bundles every plot + every MP4 + summary JSONs into one shareable file
