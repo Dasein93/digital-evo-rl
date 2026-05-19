@@ -39,11 +39,15 @@ ssh "$VPS_HOST" 'set -e
 ssh "$VPS_HOST" "mkdir -p $PROJ_REMOTE/{runs,logs}"
 
 # 4. Rsync code (excludes generated stuff and venv).
+# CRITICAL: runs/ and logs/ are VPS-side working data — never delete them from
+# the remote even when they're absent locally. Same for the dormant
+# /opt/transcribe/ scaffolding (which is outside $PROJ_REMOTE but be safe).
 echo "==> Rsync code -> $VPS_HOST:$PROJ_REMOTE"
 rsync -avh --delete \
   --exclude .git --exclude venv --exclude __pycache__ \
   --exclude artifacts --exclude .pytest_cache \
   --exclude '*.pyc' --exclude '.venv' \
+  --exclude runs --exclude logs \
   ./ "$VPS_HOST:$PROJ_REMOTE/"
 
 # 5. Create venv + install CPU-only PyTorch + the rest of requirements.txt.
