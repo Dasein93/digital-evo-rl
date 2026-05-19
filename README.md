@@ -9,19 +9,19 @@ Python-first project to explore **predator–prey** dynamics with **multi-agent 
 - **(Optional):** Jules for repo-wide PRs
 
 ## Project Status
-- **Phase:** 1 — Baseline PPO + trajectory recorder/replay
-- **Next Up:** Phase 2 — Novelty/QD hooks; GPU sweeps; richer envs
+- **Phase:** 2 — Novelty hooks + checkpoints + greedy eval
+- **Next Up:** Phase 3 — full QD archive (MAP-Elites), seed sweeps, richer envs
 - **Last Run:** see `docs/run_log.md`
 
 ## Structure
 ```
 envs/                MPE simple_tag wrapper + team helpers
-agents/              (reserved for evolved/QD agent variants)
+agents/              novelty.py (BC + archive), checkpoint.py (save/load)
 train/               ppo.py (shared-policy PPO per team)
-train/tools/         recorder.py, replay.py
-configs/             base.yaml (training), smoke.yaml (CI/dev)
+train/tools/         recorder.py, replay.py, eval.py
+configs/             base.yaml, smoke.yaml, preview.yaml, preview_novelty.yaml
 artifacts/           per-run output dirs (gitignored)
-tests/               pytest smoke suite (runs full loop on smoke.yaml)
+tests/               pytest smoke suite — full loop, novelty math, ckpt/eval
 docs/                run_log.md, prompts.md
 .github/             workflows/ci.yml, PR + issue templates
 ```
@@ -53,6 +53,22 @@ python -m train.tools.replay \
   --out  artifacts/<run>/replays/episode_1.mp4 \
   --episode 1 --n_predators 2 --n_prey 2 --max_cycles 200
 ```
+
+### Greedy evaluation from a saved checkpoint
+```bash
+python -m train.tools.eval \
+  --ckpt artifacts/<run>/checkpoints/final \
+  --out  artifacts/<run>/eval \
+  --episodes 10 --n_predators 2 --n_prey 2 --max_cycles 200 \
+  --record_first_n 1   # writes eval_episode_001.mp4
+```
+
+### Digital-evolution hooks (Phase 2)
+Set `novelty.enabled: true` in the config to compute a per-team k-NN
+novelty score (over a 4D behavior characteristic — mean position, mean
+speed, action entropy) and optionally inject it as an intrinsic reward
+via `novelty.bonus_coef`. See `configs/preview_novelty.yaml` for a
+ready-to-run example.
 
 ## Conventions
 - Branches: `main` (stable), `dev` (work), `feat/<topic>`

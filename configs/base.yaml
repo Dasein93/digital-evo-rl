@@ -8,6 +8,7 @@ env:
 train:
   algo: ppo
   total_episodes: 500
+  device: auto              # cpu | cuda | mps | auto
   gamma: 0.99
   gae_lambda: 0.95
   lr: 3.0e-4
@@ -27,3 +28,11 @@ logging:
 recording:
   enabled: false
   sample_rate: 1
+novelty:
+  enabled: false            # per-team behavior-characteristic novelty
+  capacity: 500             # sliding archive size
+  k: 15                     # k-NN for novelty scoring
+  bonus_coef: 0.0           # >0 adds novelty * coef as intrinsic reward
+checkpoint:
+  enabled: true
+  every: 0                  # 0 = only at end; N = every N episodes

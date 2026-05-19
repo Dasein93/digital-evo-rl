@@ -66,21 +66,22 @@ class ActorCritic(nn.Module):
             nn.Linear(hidden, 1),
         )
 
-    def step(self, obs: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def step(self, obs: torch.Tensor, greedy: bool = False) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         logits = self.actor(obs)
         dist = torch.distributions.Categorical(logits=logits)
-        a = dist.sample()
+        a = logits.argmax(dim=-1) if greedy else dist.sample()
         logp = dist.log_prob(a)
         v = self.critic(obs).squeeze(-1)
         return a, logp, v
 
 
 class PPO:
-    def __init__(self, obs_dim: int, act_dim: int, cfg: PPOConfig):
+    def __init__(self, obs_dim: int, act_dim: int, cfg: PPOConfig, device: str | torch.device = "cpu"):
         self.cfg = cfg
         self.obs_dim = obs_dim
         self.act_dim = act_dim
-        self.ac = ActorCritic(obs_dim, act_dim, hidden=cfg.hidden)
+        self.device = torch.device(device)
+        self.ac = ActorCritic(obs_dim, act_dim, hidden=cfg.hidden).to(self.device)
         self.opt = torch.optim.Adam(self.ac.parameters(), lr=cfg.lr)
 
     @staticmethod
@@ -150,11 +151,11 @@ class PPO:
         if not all_obs:
             return {"pg_loss": 0.0, "v_loss": 0.0, "entropy": 0.0, "n": 0}
 
-        obs = torch.from_numpy(np.concatenate(all_obs, axis=0))
-        acts = torch.from_numpy(np.concatenate(all_acts, axis=0))
-        old_logps = torch.from_numpy(np.concatenate(all_logps, axis=0))
-        adv = torch.from_numpy(np.concatenate(all_adv, axis=0))
-        rets = torch.from_numpy(np.concatenate(all_ret, axis=0))
+        obs = torch.from_numpy(np.concatenate(all_obs, axis=0)).to(self.device)
+        acts = torch.from_numpy(np.concatenate(all_acts, axis=0)).to(self.device)
+        old_logps = torch.from_numpy(np.concatenate(all_logps, axis=0)).to(self.device)
+        adv = torch.from_numpy(np.concatenate(all_adv, axis=0)).to(self.device)
+        rets = torch.from_numpy(np.concatenate(all_ret, axis=0)).to(self.device)
         adv = (adv - adv.mean()) / (adv.std() + 1e-8)
 
         n = obs.shape[0]
