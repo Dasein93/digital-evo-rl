@@ -29,8 +29,10 @@ import matplotlib.pyplot as plt
 
 from agents.checkpoint import save_checkpoint
 from agents.novelty import BehaviorCharacteristic, NoveltyArchive
+from agents.qd import MAPElitesArchive, MAPElitesConfig
 from envs.predator_prey import make_env, reset as env_reset, step as env_step, team_of, TEAM_PREDATOR, TEAM_PREY
 from train.ppo import PPO, PPOConfig, flatten_obs, set_seed, empty_rollout, append_step
+from train.tools.plots import archive_heatmap
 from train.tools.recorder import TrajectoryRecorder
 
 
@@ -115,6 +117,12 @@ def main(
     ckpt_enabled = bool(ckpt_cfg.get("enabled", True))
     ckpt_every = int(ckpt_cfg.get("every", 0))  # 0 = end-of-training only
 
+    qd_cfg_raw = cfg.get("qd", {}) or {}
+    qd_enabled = bool(qd_cfg_raw.get("enabled", False))
+    qd_every = int(qd_cfg_raw.get("every", 5))
+    qd_window = int(qd_cfg_raw.get("fitness_window", 5))
+    qd_mecfg = MAPElitesConfig.from_dict(qd_cfg_raw)
+
     run_id = datetime.now(UTC).strftime("run_%Y%m%d_%H%M%S")
     out_root = save_dir or cfg.get("logging", {}).get("save_dir", "artifacts/")
     out_dir = os.path.join(out_root, run_id)
@@ -133,6 +141,10 @@ def main(
     ppos = _build_ppos(cfg.get("train", {}) or {}, team_dims, act_dim, device=device)
 
     archives = {team: NoveltyArchive(capacity=nov_capacity, k=nov_k) for team in ppos} if nov_enabled else {}
+    qd_archives: Dict[str, MAPElitesArchive] = {}
+    if qd_enabled:
+        for team in ppos:
+            qd_archives[team] = MAPElitesArchive(qd_mecfg, save_dir=os.path.join(out_dir, "qd", team))
 
     manifest = {
         "run_id": run_id,
@@ -145,6 +157,14 @@ def main(
         "recording": {"enabled": rec_enabled, "sample_rate": rec_sample_rate},
         "novelty": {"enabled": nov_enabled, "capacity": nov_capacity, "k": nov_k, "bonus_coef": nov_bonus_coef},
         "checkpoint": {"enabled": ckpt_enabled, "every": ckpt_every},
+        "qd": {
+            "enabled": qd_enabled,
+            "every": qd_every,
+            "fitness_window": qd_window,
+            "bc_dims": list(qd_mecfg.bc_dims),
+            "bc_bounds": [list(b) for b in qd_mecfg.bc_bounds],
+            "grid_shape": list(qd_mecfg.grid_shape),
+        },
     }
     with open(os.path.join(out_dir, "manifest.json"), "w") as f:
         json.dump(manifest, f, indent=2)
@@ -219,19 +239,23 @@ def main(
                 steps += 1
 
             team_novelty: Dict[str, float] = {TEAM_PREDATOR: 0.0, TEAM_PREY: 0.0}
-            if nov_enabled:
+            team_bcs: Dict[str, np.ndarray] = {}
+            need_bcs = nov_enabled or qd_enabled
+            if need_bcs:
                 for team in ppos:
                     team_agents = [a for a in agents if team_of(a) == team]
                     per_agent_bc = {
                         a: BehaviorCharacteristic.from_agent(buf["obs"].get(a, []), buf["acts"].get(a, []), n_actions=act_dim)
                         for a in team_agents
                     }
-                    tbc = BehaviorCharacteristic.team(per_agent_bc)
-                    s = archives[team].score_and_add(tbc)
+                    team_bcs[team] = BehaviorCharacteristic.team(per_agent_bc)
+            if nov_enabled:
+                for team in ppos:
+                    s = archives[team].score_and_add(team_bcs[team])
                     team_novelty[team] = s
                     if nov_bonus_coef > 0.0:
                         bonus = nov_bonus_coef * s
-                        for a in team_agents:
+                        for a in [ag for ag in agents if team_of(ag) == team]:
                             r = buf["rews"].get(a)
                             if r:
                                 buf["rews"][a] = [x + bonus for x in r]
@@ -271,6 +295,19 @@ def main(
             if ckpt_every > 0 and ep % ckpt_every == 0:
                 _checkpoint(f"ep_{ep:06d}")
 
+            if qd_enabled and ep % qd_every == 0:
+                team_fitness = {
+                    TEAM_PREDATOR: float(np.mean(returns_pred[-qd_window:])),
+                    TEAM_PREY: float(np.mean(returns_prey[-qd_window:])),
+                }
+                for team, archive in qd_archives.items():
+                    archive.try_insert(
+                        bc=team_bcs[team],
+                        fitness=team_fitness[team],
+                        state_dict=ppos[team].ac.state_dict(),
+                        label=f"ep_{ep:06d}",
+                    )
+
             plot_every = int(cfg.get("logging", {}).get("plot_every", 50))
             if ep % plot_every == 0 or ep == total_episodes:
                 _plot(returns_mean, returns_pred, returns_prey, novelty_pred, novelty_prey, plots_dir, nov_enabled)
@@ -291,10 +328,27 @@ def main(
 
     _checkpoint("final")
 
+    if qd_enabled:
+        for team, archive in qd_archives.items():
+            archive.save_manifest()
+            i_dim, j_dim = qd_mecfg.bc_dims
+            bc_names = {0: "mean_x", 1: "mean_y", 2: "mean_speed", 3: "action_entropy"}
+            archive_heatmap(
+                archive.fitness_grid(),
+                out_path=os.path.join(plots_dir, f"qd_archive_{team}.png"),
+                title=f"MAP-Elites: {team} (cov={archive.coverage():.0%}, best={archive.best_fitness():.1f})",
+                xlabel=bc_names.get(i_dim, f"BC[{i_dim}]"),
+                ylabel=bc_names.get(j_dim, f"BC[{j_dim}]"),
+                bc_bounds=qd_mecfg.bc_bounds,
+            )
+
     print(f"Saved metrics -> {metrics_path}")
     print(f"Saved plot   -> {os.path.join(plots_dir, 'return.png')}")
     if ckpt_enabled:
         print(f"Final ckpt   -> {os.path.join(out_dir, 'checkpoints', 'final')}")
+    if qd_enabled:
+        for team, arch in qd_archives.items():
+            print(f"QD {team}      -> {arch.save_dir} (cov={arch.coverage():.0%}, best={arch.best_fitness():.1f})")
     print(f"Run dir      -> {out_dir}")
     return out_dir
 

@@ -9,19 +9,21 @@ Python-first project to explore **predator–prey** dynamics with **multi-agent 
 - **(Optional):** Jules for repo-wide PRs
 
 ## Project Status
-- **Phase:** 2 — Novelty hooks + checkpoints + greedy eval
-- **Next Up:** Phase 3 — full QD archive (MAP-Elites), seed sweeps, richer envs
+- **Phase:** 5 — MAP-Elites archive + mutation-based evolution + cross-play tournament + multi-seed sweep
+- **Next Up:** richer envs (grid-world variant, obstacles); larger-scale runs on Colab GPU
 - **Last Run:** see `docs/run_log.md`
 
 ## Structure
 ```
 envs/                MPE simple_tag wrapper + team helpers
-agents/              novelty.py (BC + archive), checkpoint.py (save/load)
+agents/              novelty.py, qd.py (MAP-Elites), checkpoint.py
 train/               ppo.py (shared-policy PPO per team)
-train/tools/         recorder.py, replay.py, eval.py
-configs/             base.yaml, smoke.yaml, preview.yaml, preview_novelty.yaml
+train/tools/         recorder.py, replay.py, eval.py, evolve.py,
+                     tournament.py, sweep.py, plots.py
+configs/             base / smoke / preview / preview_novelty / preview_qd
 artifacts/           per-run output dirs (gitignored)
-tests/               pytest smoke suite — full loop, novelty math, ckpt/eval
+tests/               pytest suite — full loop, novelty, ckpt/eval, QD,
+                     evolve, tournament
 docs/                run_log.md, prompts.md
 .github/             workflows/ci.yml, PR + issue templates
 ```
@@ -67,8 +69,42 @@ python -m train.tools.eval \
 Set `novelty.enabled: true` in the config to compute a per-team k-NN
 novelty score (over a 4D behavior characteristic — mean position, mean
 speed, action entropy) and optionally inject it as an intrinsic reward
-via `novelty.bonus_coef`. See `configs/preview_novelty.yaml` for a
-ready-to-run example.
+via `novelty.bonus_coef`. See `configs/preview_novelty.yaml`.
+
+### Quality-Diversity archive (Phase 3)
+With `qd.enabled: true`, the training loop periodically snapshots the
+current policy and tries to insert it into a per-team **MAP-Elites**
+archive — a grid over two BC dimensions, keeping the best-fitness
+policy per cell. Plots: `plots/qd_archive_{predator,prey}.png`.
+See `configs/preview_qd.yaml`.
+
+### Mutation-based evolution (Phase 4)
+Spawn weight-perturbed mutants from any checkpoint, evaluate each
+greedily against the opposing team, and fill a MAP-Elites archive.
+The best elite is packaged as a tournament-ready checkpoint:
+```bash
+python -m train.tools.evolve \
+  --ckpt artifacts/<run>/checkpoints/final \
+  --out  artifacts/<run>/evolve --team predator \
+  --n_mutants 30 --sigma 0.25 --eval_eps 2 \
+  --n_predators 2 --n_prey 2 --max_cycles 100
+```
+
+### Cross-play tournament + sweep (Phase 5)
+Pair every predator checkpoint with every prey checkpoint:
+```bash
+python -m train.tools.tournament \
+  --pred ckptA:base ckptB:nov ckptC:evolved \
+  --prey ckptA:base ckptB:nov ckptC:evolved \
+  --out  artifacts/tour --episodes 3 \
+  --n_predators 2 --n_prey 2 --max_cycles 100
+```
+Multi-config sweep with per-config mean ± std plot:
+```bash
+python -m train.tools.sweep \
+  --configs configs/preview.yaml configs/preview_novelty.yaml \
+  --seeds 0 1 2 --out artifacts/sweep --workers 2
+```
 
 ## Conventions
 - Branches: `main` (stable), `dev` (work), `feat/<topic>`

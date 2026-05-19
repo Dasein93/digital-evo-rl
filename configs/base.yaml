@@ -36,3 +36,10 @@ novelty:
 checkpoint:
   enabled: true
   every: 0                  # 0 = only at end; N = every N episodes
+qd:
+  enabled: false            # MAP-Elites archive over policy snapshots
+  every: 10                 # snapshot+insert attempt every N episodes
+  fitness_window: 10        # average return over last K episodes as fitness
+  bc_dims: [0, 3]           # which BC indices to grid (mean_x, action_entropy)
+  bc_bounds: [[-2.0, 2.0], [0.0, 1.65]]
+  grid_shape: [10, 10]
