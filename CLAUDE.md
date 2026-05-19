@@ -43,9 +43,11 @@ python -m train.tools.replay --npz <run>/trajectory.npz --out <run>/replays/ep1.
 - `train/tools/eval.py` — loads a checkpoint, runs greedy episodes (no PPO updates, no exploration), writes `eval.csv`/`eval_summary.json`/optional MP4. The function `evaluate(...)` is importable, the CLI is `python -m train.tools.eval`.
 - `train/tools/evolve.py` — loads a seed checkpoint, spawns Gaussian-weight-perturbed mutants of one team, greedy-evals each against the unchanged opposing team, attempts insertion into a MAP-Elites archive. **Writes `best_checkpoint/` as a tournament-ready ckpt** (evolved team + unchanged opponent).
 - `train/tools/tournament.py` — loads N predator ckpts × M prey ckpts, runs K greedy episodes per pair, writes `tournament.csv` + two heatmaps + summary JSON. CLI entries are `path:label` strings.
-- `train/tools/sweep.py` — multi-config × multi-seed runner via subprocesses (`--workers` for a `ProcessPoolExecutor`). Aggregates each cell's `metrics.csv` into a mean ± std plot per config.
+- `train/tools/sweep.py` — multi-config × multi-seed runner via subprocesses (`--workers` for a `ProcessPoolExecutor`). Passes `--seed S` to `run_cpu.py` so seeds actually vary the training run; aggregates each cell's `metrics.csv` into a mean ± std plot per config.
+- `train/tools/coevolve.py` — N-generation co-evolutionary loop. Each generation alternates predator and prey phases: spawn ``n_mutants`` weight-perturbed copies of the current champion, greedy-eval each against the *current opponent champion*, fill a per-(gen, team) MAP-Elites archive, promote highest-fitness elite. Writes ``gen_NNN/champion_checkpoint/`` per generation and a cross-generation champion tournament + fitness/coverage plots at the end.
+- `train/tools/report.py` — walks any run dir and emits a single self-contained ``report.html`` with all plots, MP4s, summary JSONs, and the first 12 rows of every CSV embedded as base64. Handy for sharing a result without a server.
 - `train/tools/plots.py` — `archive_heatmap` and `tournament_heatmap` shared between training and tools.
-- `configs/base.yaml` — full training run with novelty/checkpoint/qd blocks (all conservative defaults; qd off by default). `configs/smoke.yaml` — tiny config used by tests (has qd on with a tiny 4×4 grid so the QD code path runs in CI). `configs/preview.yaml` / `preview_novelty.yaml` / `preview_qd.yaml` are paired demos for rendering comparison videos.
+- `configs/base.yaml` — full training run with novelty/checkpoint/qd blocks (all conservative defaults; qd off by default). Supports `env.n_obstacles` (obs dim grows by 2 per obstacle — checkpoints are env-shape-specific). `configs/smoke.yaml` — tiny config used by tests (has qd on with a tiny 4×4 grid so the QD code path runs in CI). `configs/preview.yaml` / `preview_novelty.yaml` / `preview_qd.yaml` / `preview_coevolve.yaml` are paired demos for rendering comparison videos.
 
 ### Multi-agent rollout shape
 Each transition is per-(step, agent). The per-team `PPO.update` receives `{agent_id: list_of_T_values}` dicts for `obs/acts/logps/rews/dones/vals`, computes GAE for each agent's contiguous trajectory, then concatenates across agents for shuffled minibatch SGD. If you add new buffer fields, add them to **both** `empty_rollout()` and `append_step()` in `train/ppo.py` and the per-agent slicing in `run_cpu.main`.
@@ -62,12 +64,23 @@ Each invocation writes to `artifacts/run_YYYYMMDD_HHMMSS/`:
 The whole `artifacts/` tree is gitignored. Link large outputs from `docs/run_log.md` or Google Drive.
 
 ### CLI surface
-- `python run_cpu.py --config <cfg> [--episodes N] [--save_dir D] [--device cpu|cuda|mps|auto]`
+- `python run_cpu.py --config <cfg> [--episodes N] [--save_dir D] [--device cpu|cuda|mps|auto] [--seed N]`
 - `python -m train.tools.replay --npz <run>/trajectory.npz --out X.mp4 --episode E --n_predators ... --n_prey ... --max_cycles ...`
-- `python -m train.tools.eval --ckpt <run>/checkpoints/final --out <run>/eval --episodes N [--record_first_n K]`
-- `python -m train.tools.evolve --ckpt <ckpt> --out <dir> --team {predator|prey} --n_mutants N --sigma S [--eval_eps E]`
-- `python -m train.tools.tournament --pred <ckpt:label> ... --prey <ckpt:label> ... --out <dir> --episodes N`
+- `python -m train.tools.eval --ckpt <run>/checkpoints/final --out <run>/eval --episodes N [--record_first_n K] [--n_obstacles K]`
+- `python -m train.tools.evolve --ckpt <ckpt> --out <dir> --team {predator|prey} --n_mutants N --sigma S [--eval_eps E] [--n_obstacles K]`
+- `python -m train.tools.tournament --pred <ckpt:label> ... --prey <ckpt:label> ... --out <dir> --episodes N [--n_obstacles K]`
 - `python -m train.tools.sweep --configs <cfg> ... --seeds S ... --out <dir> [--workers W] [--episodes N]`
+- `python -m train.tools.coevolve --seed_ckpt <ckpt> --out <dir> --generations G --n_mutants N --sigma S [--n_obstacles K]`
+- `python -m train.tools.report --dir <run> --out report.html [--title T]`
+
+### Obstacle plumbing gotcha
+`env.n_obstacles` changes the observation dim (each obstacle adds 2 to
+every agent's obs). Checkpoints store obs_dim in their manifest, so a
+checkpoint trained with N obstacles **cannot** be eval'd / tournament'd
+in an env with a different obstacle count — `load_checkpoint` will
+succeed but the first forward pass will fail with a shape mismatch.
+Every tool that builds an env (`eval`, `evolve`, `tournament`,
+`coevolve`) accepts `--n_obstacles` for this reason; default is 0.
 
 ## Conventions
 - Branches: `main` (stable), `dev` (work), `feat/<topic>`. PR template at `.github/PULL_REQUEST_TEMPLATE.md` expects a Colab-style validation snippet (`!pip install -r requirements.txt` then `!python run_cpu.py ...`).

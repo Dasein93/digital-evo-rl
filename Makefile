@@ -25,5 +25,15 @@ preview:
 	python run_cpu.py --config configs/preview.yaml
 	python run_cpu.py --config configs/preview_novelty.yaml
 
+coevolve_demo:
+	@mkdir -p artifacts/coevolve_demo
+	python run_cpu.py --config configs/preview_coevolve.yaml --save_dir artifacts/coevolve_demo
+	@RUN=$$(ls -td artifacts/coevolve_demo/run_* | head -1) ; \
+		python -m train.tools.coevolve --seed_ckpt $$RUN/checkpoints/final \
+			--out artifacts/coevolve_demo/coev --generations 4 --n_mutants 15 \
+			--sigma 0.2 --n_predators 2 --n_prey 2 --n_obstacles 2 --max_cycles 80
+	python -m train.tools.report --dir artifacts/coevolve_demo/coev \
+		--out artifacts/coevolve_demo/report.html
+
 clean:
 	rm -rf __pycache__ .pytest_cache **/__pycache__

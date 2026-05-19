@@ -88,17 +88,19 @@ def main(
     override_eps: int | None = None,
     save_dir: str | None = None,
     device_override: str | None = None,
+    seed_override: int | None = None,
 ) -> str:
     with open(cfg_path, "r") as f:
         cfg = yaml.safe_load(f)
 
-    seed = int(cfg.get("seed", 42))
+    seed = int(seed_override) if seed_override is not None else int(cfg.get("seed", 42))
     set_seed(seed)
 
     env_cfg = cfg.get("env", {})
     max_steps = int(env_cfg.get("max_steps", 200))
     n_pred = int(env_cfg.get("n_predators", 2))
     n_prey = int(env_cfg.get("n_prey", 2))
+    n_obstacles = int(env_cfg.get("n_obstacles", 0))
 
     total_episodes = int(override_eps or cfg.get("train", {}).get("total_episodes", 500))
     device = _resolve_device(device_override or cfg.get("train", {}).get("device", "cpu"))
@@ -129,7 +131,7 @@ def main(
     plots_dir = os.path.join(out_dir, "plots")
     ensure_dir(out_dir); ensure_dir(plots_dir)
 
-    env = make_env(n_predators=n_pred, n_prey=n_prey, max_cycles=max_steps, seed=seed)
+    env = make_env(n_predators=n_pred, n_prey=n_prey, n_obstacles=n_obstacles, max_cycles=max_steps, seed=seed)
     obs0 = env_reset(env, seed=seed)
     obs_list, agents = flatten_obs(obs0)
     act_dim = int(env.action_space(agents[0]).n)
@@ -151,7 +153,7 @@ def main(
         "seed": seed,
         "device": device,
         "config_path": os.path.abspath(cfg_path),
-        "env": {"n_predators": n_pred, "n_prey": n_prey, "max_steps": max_steps, "act_dim": act_dim},
+        "env": {"n_predators": n_pred, "n_prey": n_prey, "n_obstacles": n_obstacles, "max_steps": max_steps, "act_dim": act_dim},
         "team_obs_dims": team_dims,
         "total_episodes": total_episodes,
         "recording": {"enabled": rec_enabled, "sample_rate": rec_sample_rate},
@@ -388,5 +390,6 @@ if __name__ == "__main__":
     ap.add_argument("--episodes", type=int, default=None)
     ap.add_argument("--save_dir", type=str, default=None)
     ap.add_argument("--device", type=str, default=None, help="cpu | cuda | mps | auto (overrides config)")
+    ap.add_argument("--seed", type=int, default=None, help="overrides the seed in the config (lets sweep vary it)")
     args = ap.parse_args()
-    main(args.config, args.episodes, args.save_dir, args.device)
+    main(args.config, args.episodes, args.save_dir, args.device, args.seed)

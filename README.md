@@ -9,8 +9,8 @@ Python-first project to explore **predator–prey** dynamics with **multi-agent 
 - **(Optional):** Jules for repo-wide PRs
 
 ## Project Status
-- **Phase:** 5 — MAP-Elites archive + mutation-based evolution + cross-play tournament + multi-seed sweep
-- **Next Up:** richer envs (grid-world variant, obstacles); larger-scale runs on Colab GPU
+- **Phase:** 6 — Co-evolutionary arms race + obstacles in env + self-contained HTML report bundler + real seed override
+- **Next Up:** Colab GPU run with bigger generations / populations; per-cell elites tournament; curriculum scheduling
 - **Last Run:** see `docs/run_log.md`
 
 ## Structure
@@ -97,13 +97,34 @@ python -m train.tools.tournament \
   --pred ckptA:base ckptB:nov ckptC:evolved \
   --prey ckptA:base ckptB:nov ckptC:evolved \
   --out  artifacts/tour --episodes 3 \
-  --n_predators 2 --n_prey 2 --max_cycles 100
+  --n_predators 2 --n_prey 2 --n_obstacles 0 --max_cycles 100
 ```
-Multi-config sweep with per-config mean ± std plot:
+Multi-config sweep with per-config mean ± std plot (`--seeds` actually
+varies the training seed; pass `--workers W` for parallel subprocesses):
 ```bash
 python -m train.tools.sweep \
   --configs configs/preview.yaml configs/preview_novelty.yaml \
   --seeds 0 1 2 --out artifacts/sweep --workers 2
+```
+
+### Co-evolutionary arms race (Phase 6)
+Alternating predator/prey mutation + selection across N generations. The
+incumbent is always in the candidate pool, so champion fitness is
+monotone within a phase. Each generation snapshots both champions as a
+tournament-ready ckpt and the run finishes with a cross-generation
+heatmap (gen-i predator vs gen-j prey) so the arms race is visible:
+```bash
+python -m train.tools.coevolve \
+  --seed_ckpt artifacts/<run>/checkpoints/final \
+  --out artifacts/coev --generations 4 --n_mutants 20 --sigma 0.2 \
+  --n_predators 2 --n_prey 2 --n_obstacles 2 --max_cycles 100
+```
+
+### Self-contained HTML report
+Bundles every plot + every MP4 + summary JSONs into one shareable file
+(base64-embedded), no server needed:
+```bash
+python -m train.tools.report --dir artifacts/<run> --out report.html
 ```
 
 ## Conventions

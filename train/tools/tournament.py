@@ -61,8 +61,9 @@ def _match(
     episodes: int,
     seed: int,
     device: str,
+    n_obstacles: int = 0,
 ) -> Tuple[float, float]:
-    env = make_env(n_predators=n_predators, n_prey=n_prey, max_cycles=max_cycles, seed=seed)
+    env = make_env(n_predators=n_predators, n_prey=n_prey, n_obstacles=n_obstacles, max_cycles=max_cycles, seed=seed)
     ppos = {TEAM_PREDATOR: pred_ppo, TEAM_PREY: prey_ppo}
     pred_rets, prey_rets = [], []
     try:
@@ -99,6 +100,7 @@ def tournament(
     max_cycles: int,
     seed: int,
     device: str,
+    n_obstacles: int = 0,
 ) -> Dict:
     os.makedirs(out_dir, exist_ok=True)
     # Pre-load every checkpoint just once.
@@ -117,7 +119,7 @@ def tournament(
             for j, prey_label in enumerate(cols):
                 pr, py = _match(
                     pred_ppos[pred_label], prey_ppos[prey_label],
-                    n_predators=n_predators, n_prey=n_prey,
+                    n_predators=n_predators, n_prey=n_prey, n_obstacles=n_obstacles,
                     max_cycles=max_cycles, episodes=episodes,
                     seed=seed + 1000 * i + j, device=device,
                 )
@@ -161,6 +163,7 @@ def main() -> None:
     ap.add_argument("--n_predators", type=int, default=2)
     ap.add_argument("--n_prey", type=int, default=2)
     ap.add_argument("--max_cycles", type=int, default=100)
+    ap.add_argument("--n_obstacles", type=int, default=0)
     ap.add_argument("--seed", type=int, default=99999)
     ap.add_argument("--device", default="cpu")
     args = ap.parse_args()
@@ -169,7 +172,7 @@ def main() -> None:
         prey_entries=_parse_entries(args.prey),
         out_dir=args.out,
         episodes=args.episodes,
-        n_predators=args.n_predators, n_prey=args.n_prey,
+        n_predators=args.n_predators, n_prey=args.n_prey, n_obstacles=args.n_obstacles,
         max_cycles=args.max_cycles, seed=args.seed, device=args.device,
     )
     print(json.dumps({k: v for k, v in s.items() if "matrix" not in k}, indent=2))

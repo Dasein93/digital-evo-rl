@@ -37,15 +37,9 @@ def _run_one(args: Tuple[str, str, int, int | None]) -> Dict:
     config, save_dir, seed, episodes = args
     env = os.environ.copy()
     env["SDL_VIDEODRIVER"] = env.get("SDL_VIDEODRIVER", "dummy")
-    cmd = [sys.executable, "run_cpu.py", "--config", config, "--save_dir", save_dir]
+    cmd = [sys.executable, "run_cpu.py", "--config", config, "--save_dir", save_dir, "--seed", str(seed)]
     if episodes is not None:
         cmd += ["--episodes", str(episodes)]
-    # Override seed via env var? Easier: write a temp config? For simplicity,
-    # we pass the seed through PYTHONHASHSEED only; the actual run_cpu loads
-    # seed from the config. So sweeps over seeds must change the config seed.
-    # To avoid copying configs, we pass --episodes only and rely on multiple
-    # invocations producing distinct run_ids (timestamp). The "seed" arg is
-    # used to vary save_dir labelling and as a tag in the manifest.
     proc = subprocess.run(cmd, env=env, capture_output=True, text=True)
     return {
         "config": config,

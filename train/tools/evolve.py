@@ -119,6 +119,7 @@ def evolve(
     seed: int,
     device: str,
     qd_cfg: MAPElitesConfig | None = None,
+    n_obstacles: int = 0,
 ) -> Dict:
     set_seed(seed)
     rng = torch.Generator(device="cpu")
@@ -131,7 +132,7 @@ def evolve(
     archive_dir = os.path.join(out_dir, "qd", target_team)
     archive = MAPElitesArchive(qd_cfg or MAPElitesConfig(), save_dir=archive_dir)
 
-    env = make_env(n_predators=n_predators, n_prey=n_prey, max_cycles=max_cycles, seed=seed)
+    env = make_env(n_predators=n_predators, n_prey=n_prey, n_obstacles=n_obstacles, max_cycles=max_cycles, seed=seed)
 
     seed_sd = deepcopy(seed_ppos[target_team].ac.state_dict())
     summary_rows: List[Dict] = []
@@ -214,6 +215,7 @@ def main() -> None:
     ap.add_argument("--n_predators", type=int, default=2)
     ap.add_argument("--n_prey", type=int, default=2)
     ap.add_argument("--max_cycles", type=int, default=100)
+    ap.add_argument("--n_obstacles", type=int, default=0)
     ap.add_argument("--seed", type=int, default=1234)
     ap.add_argument("--device", default="cpu")
     args = ap.parse_args()
@@ -221,7 +223,7 @@ def main() -> None:
         ckpt_dir=args.ckpt, out_dir=args.out, target_team=args.team,
         n_mutants=args.n_mutants, sigma=args.sigma, eval_eps=args.eval_eps,
         n_predators=args.n_predators, n_prey=args.n_prey, max_cycles=args.max_cycles,
-        seed=args.seed, device=args.device,
+        seed=args.seed, device=args.device, n_obstacles=args.n_obstacles,
     )
     print(json.dumps({k: v for k, v in s.items() if k != "rows"}, indent=2))
 
