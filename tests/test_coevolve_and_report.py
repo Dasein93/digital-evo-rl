@@ -94,6 +94,60 @@ def test_coevolve_with_workers_matches_serial(trained_ckpt: Path, tmp_path: Path
     assert len(s_par["history"]) == 2
 
 
+def test_weighted_hof_combine_math():
+    """Direct unit test for the weighted fitness combiner.
+
+    Catches regressions in the central formula independent of the env loop.
+    """
+    from train.tools.coevolve import _combine_fitnesses
+
+    # No HoF opponents → current fitness returned verbatim, regardless of weight.
+    assert _combine_fitnesses(10.0, [], None) == 10.0
+    assert _combine_fitnesses(10.0, [], 0.5) == 10.0
+    assert _combine_fitnesses(10.0, [], 0.9) == 10.0
+
+    # w_current=None → equal weight across (current + HoF), as in original behavior.
+    # mean of [10, 2, 4] = 16/3 ≈ 5.333
+    assert abs(_combine_fitnesses(10.0, [2.0, 4.0], None) - 16 / 3) < 1e-6
+
+    # w_current=0.5 → 0.5 * current + 0.5 * mean(hof). With hof=[2,4], mean=3.
+    # 0.5*10 + 0.5*3 = 5 + 1.5 = 6.5
+    assert abs(_combine_fitnesses(10.0, [2.0, 4.0], 0.5) - 6.5) < 1e-6
+
+    # w_current=1.0 → HoF effectively ignored.
+    assert abs(_combine_fitnesses(10.0, [-100.0, -100.0], 1.0) - 10.0) < 1e-6
+
+    # w_current=0.0 → HoF mean only; current ignored.
+    assert abs(_combine_fitnesses(10.0, [2.0, 4.0], 0.0) - 3.0) < 1e-6
+
+    # The motivating case (the bug from the first HoF experiment): a mutant
+    # smashes 3 historical opponents (+50 each) but loses to the current
+    # strong opponent (-20). Under uniform weights it's promoted on average,
+    # which is exactly the failure mode we're trying to fix. Under a strong
+    # current-opponent weight (0.8) the same mutant is demoted.
+    current = -20.0
+    hof = [50.0, 50.0, 50.0]
+    assert _combine_fitnesses(current, hof, None)  > 0   # uniform: promoted (the bug)
+    assert _combine_fitnesses(current, hof, 0.8)   < 0   # weighted: demoted (the fix)
+
+
+def test_coevolve_weighted_hof_runs(trained_ckpt: Path, tmp_path: Path):
+    """End-to-end: weighted HoF runs cleanly and produces history records."""
+    from train.tools.coevolve import coevolve
+    from agents.qd import MAPElitesConfig
+    s = coevolve(
+        seed_ckpt_dir=str(trained_ckpt),
+        out_dir=str(tmp_path / "coev_weighted"),
+        generations=2, n_mutants=2, sigma=0.3, eval_eps=1,
+        n_predators=1, n_prey=1, n_obstacles=0, max_cycles=10,
+        seed=66, device="cpu",
+        qd_cfg=MAPElitesConfig(grid_shape=(3, 3)),
+        hof_k=2, hof_eval_eps=1, hof_current_weight=0.7,
+    )
+    assert s["generations"] == 2
+    assert len(s["history"]) == 4
+
+
 def test_hall_of_fame_grows_each_generation(trained_ckpt: Path, tmp_path: Path):
     """With hof_k>0 the HoF should be populated and the fitness selection should
     still complete cleanly. We can't easily assert behavior is better, only that

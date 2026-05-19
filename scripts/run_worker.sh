@@ -35,6 +35,7 @@ WORKERS="${WORKERS:-2}"                                       # 2 vCPUs -> 2 wor
 NUM_THREADS="${NUM_THREADS:-1}"                               # per-process thread cap
 HOF_K="${HOF_K:-0}"                                           # Hall of Fame size per mutant (0 = off)
 HOF_EVAL_EPS="${HOF_EVAL_EPS:-1}"                             # eps per HoF opponent
+HOF_CURRENT_WEIGHT="${HOF_CURRENT_WEIGHT:-}"                  # weight on current opponent (0..1); empty = equal weights
 SEED="${SEED:-2024}"
 LOG="${LOG:-logs/coevolve.log}"
 
@@ -61,6 +62,13 @@ while true; do
   attempt=$((attempt + 1))
   echo "[$(date -Iseconds)] starting coevolve attempt #$attempt (resume=yes)" | tee -a "$LOG"
 
+  # Only pass --hof_current_weight when explicitly set, so unset behaves identically
+  # to the original equal-weight HoF (no behavior change for users who don't tune it).
+  hof_w_arg=()
+  if [ -n "$HOF_CURRENT_WEIGHT" ]; then
+    hof_w_arg=(--hof_current_weight "$HOF_CURRENT_WEIGHT")
+  fi
+
   SDL_VIDEODRIVER=dummy nice -n 19 "$PY" -u -m train.tools.coevolve \
     --seed_ckpt "$SEED_CKPT" --out "$OUT" \
     --generations "$GENERATIONS" --n_mutants "$N_MUTANTS" --sigma "$SIGMA" \
@@ -69,6 +77,7 @@ while true; do
     --max_cycles "$MAX_CYCLES" --seed "$SEED" \
     --workers "$WORKERS" --num_threads "$NUM_THREADS" \
     --hof_k "$HOF_K" --hof_eval_eps "$HOF_EVAL_EPS" \
+    "${hof_w_arg[@]}" \
     --resume >> "$LOG" 2>&1
   rc=$?
 

@@ -102,22 +102,24 @@ def _eval_mutant_worker(payload: Dict) -> Tuple[float, List[float]]:
         n_obstacles=payload["n_obstacles"], max_cycles=payload["max_cycles"],
         seed=payload["seed"],
     )
-    fitnesses: List[float] = []
+    current_fit = 0.0
+    hof_fits: List[float] = []
+    bc = np.zeros(4, dtype=np.float32)
     try:
         # Current opponent — BC from this match is the archive key.
-        fit, bc = _rollout(env, ppos, payload["eval_eps"], seed=payload["seed"],
-                           target_team=target_team, device="cpu")
-        fitnesses.append(fit)
+        current_fit, bc = _rollout(env, ppos, payload["eval_eps"], seed=payload["seed"],
+                                   target_team=target_team, device="cpu")
         # Hall of Fame opponents — fitness only, BC discarded.
         for j, sd_hof in enumerate(hof_opponents):
             ppos[opp_team].ac.load_state_dict(sd_hof)
             fit_h, _ = _rollout(env, ppos, hof_eval_eps,
                                 seed=payload["seed"] + 7919 * (j + 1),
                                 target_team=target_team, device="cpu")
-            fitnesses.append(fit_h)
+            hof_fits.append(fit_h)
     finally:
         env.close()
-    return float(sum(fitnesses) / len(fitnesses)), [float(x) for x in bc]
+    combined = _combine_fitnesses(current_fit, hof_fits, payload.get("hof_current_weight"))
+    return combined, [float(x) for x in bc]
 
 
 class HallOfFame:
@@ -157,6 +159,28 @@ class HallOfFame:
 
 def _state_dict_to_lists(sd: Dict[str, torch.Tensor]) -> Dict[str, List]:
     return {k: v.detach().cpu().tolist() for k, v in sd.items()}
+
+
+def _combine_fitnesses(current_fit: float, hof_fits: List[float], w_current: float | None) -> float:
+    """Combine the current-opponent fitness with the HoF-opponent fitnesses.
+
+    - ``w_current=None`` → equal weight across all (1 + ``len(hof_fits)``)
+      opponents. Backwards-compatible with the original HoF behavior.
+    - ``0 < w_current < 1`` → current opponent gets ``w_current``, the
+      remaining ``1 - w_current`` is split equally among HoF opponents.
+      Used to fix the ``HoF made prey weaker`` issue seen in the first
+      experiment, where mutants could be promoted by beating weak
+      historical opponents while losing catastrophically to the current
+      strong opponent.
+    - With no HoF opponents present, the current fitness is returned
+      verbatim, regardless of ``w_current``.
+    """
+    if not hof_fits:
+        return float(current_fit)
+    if w_current is None:
+        return float((current_fit + sum(hof_fits)) / (1 + len(hof_fits)))
+    w_current = float(w_current)
+    return float(w_current * current_fit + (1.0 - w_current) * (sum(hof_fits) / len(hof_fits)))
 
 
 def _teams_meta_from_ppos(ppos: Dict[str, PPO]) -> Dict[str, Dict]:
@@ -216,19 +240,20 @@ def _eval_against_opponents(
     hof_eval_eps: int,
     seed: int,
     device: str,
+    hof_current_weight: float | None = None,
 ) -> Tuple[float, np.ndarray]:
-    """Mean fitness across (current + HoF) opponents; BC from current only."""
+    """Combined fitness across (current + HoF) opponents; BC from current only."""
     ppos[opp_team].ac.load_state_dict(current_opp_sd)
     fit_cur, bc_cur = _rollout(env, ppos, eval_eps, seed=seed, target_team=target_team, device=device)
-    fits = [fit_cur]
+    hof_fits: List[float] = []
     for j, sd_hof in enumerate(hof_opp_sds):
         ppos[opp_team].ac.load_state_dict(sd_hof)
         fit_h, _ = _rollout(env, ppos, hof_eval_eps,
                             seed=seed + 7919 * (j + 1), target_team=target_team, device=device)
-        fits.append(fit_h)
+        hof_fits.append(fit_h)
     # Restore current opponent so the next caller sees a consistent state.
     ppos[opp_team].ac.load_state_dict(current_opp_sd)
-    return float(sum(fits) / len(fits)), bc_cur
+    return _combine_fitnesses(fit_cur, hof_fits, hof_current_weight), bc_cur
 
 
 def _evolve_one_team(
@@ -250,6 +275,7 @@ def _evolve_one_team(
     hof: HallOfFame | None = None,
     hof_k: int = 0,
     hof_eval_eps: int = 1,
+    hof_current_weight: float | None = None,
     py_rng: random.Random | None = None,
 ) -> Dict:
     """One generation phase for one team. Returns the new champion's metadata."""
@@ -269,7 +295,7 @@ def _evolve_one_team(
     incumbent_fit, incumbent_bc = _eval_against_opponents(
         env, ppos, target_team, opp_team, current_opp_sd,
         hof_sample_for_incumbent, eval_eps, hof_eval_eps,
-        seed=seed, device=device,
+        seed=seed, device=device, hof_current_weight=hof_current_weight,
     )
     archive.try_insert(incumbent_bc, incumbent_fit, deepcopy(base_sd), label="incumbent")
     best_fit = incumbent_fit
@@ -291,6 +317,7 @@ def _evolve_one_team(
                 "sd_opponent": _state_dict_to_lists(current_opp_sd),
                 "sd_opponents_hof": [_state_dict_to_lists(s) for s in mutant_hof_samples[k]],
                 "hof_eval_eps": hof_eval_eps,
+                "hof_current_weight": hof_current_weight,
                 "teams_meta": teams_meta,
                 "n_predators": n_predators, "n_prey": n_prey,
                 "n_obstacles": n_obstacles, "max_cycles": max_cycles,
@@ -315,6 +342,7 @@ def _evolve_one_team(
                 env, ppos, target_team, opp_team, current_opp_sd,
                 mutant_hof_samples[k], eval_eps, hof_eval_eps,
                 seed=seed + k * 17 + 1, device=device,
+                hof_current_weight=hof_current_weight,
             )
             archive.try_insert(bc_k, fit_k, deepcopy(sd_k), label=f"mut_{k:04d}")
             if fit_k > best_fit:
@@ -389,6 +417,7 @@ def coevolve(
     num_threads: int | None = None,
     hof_k: int = 0,
     hof_eval_eps: int = 1,
+    hof_current_weight: float | None = None,
 ) -> Dict:
     if num_threads is not None:
         set_num_threads(num_threads)
@@ -452,6 +481,7 @@ def coevolve(
                     workers=workers, n_predators=n_predators, n_prey=n_prey,
                     n_obstacles=n_obstacles, max_cycles=max_cycles,
                     hof=hof, hof_k=hof_k, hof_eval_eps=hof_eval_eps,
+                    hof_current_weight=hof_current_weight,
                     py_rng=py_rng,
                 )
                 arch.save_manifest()
@@ -563,6 +593,18 @@ def main() -> None:
     ap.add_argument("--num_threads", type=int, default=None, help="cap PyTorch CPU threads (use 1-2 on a 2-vCPU VPS)")
     ap.add_argument("--hof_k", type=int, default=0, help="Hall of Fame: # of past opponents sampled per mutant (0 = off)")
     ap.add_argument("--hof_eval_eps", type=int, default=1, help="episodes per Hall-of-Fame opponent (default 1)")
+    ap.add_argument(
+        "--hof_current_weight",
+        type=float,
+        default=None,
+        help=(
+            "weight on the current-opponent fitness in [0, 1]; "
+            "the rest is split equally across HoF opponents. "
+            "Default (unset) = equal weight across (current + HoF). "
+            "Use 0.6-0.8 to prevent mutants from being promoted by "
+            "beating weak historicals while losing to current opponent."
+        ),
+    )
     args = ap.parse_args()
     s = coevolve(
         seed_ckpt_dir=args.seed_ckpt, out_dir=args.out,
@@ -572,6 +614,7 @@ def main() -> None:
         max_cycles=args.max_cycles, seed=args.seed, device=args.device,
         workers=args.workers, resume=args.resume, num_threads=args.num_threads,
         hof_k=args.hof_k, hof_eval_eps=args.hof_eval_eps,
+        hof_current_weight=args.hof_current_weight,
     )
     print(json.dumps({k: v for k, v in s.items() if k not in {"history", "tournament_summary"}}, indent=2))
 

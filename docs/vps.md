@@ -104,6 +104,7 @@ rsync -avh stepan-vps:/opt/digital-evo-rl/runs/coevolve/ ./local_coev/
 | `NUM_THREADS` | 1 | PyTorch threads per worker process |
 | `HOF_K` | 0 | Hall of Fame size (0 = off; 3 is a good default) |
 | `HOF_EVAL_EPS` | 1 | episodes per HoF opponent |
+| `HOF_CURRENT_WEIGHT` | (unset) | 0..1 weight on current opponent (unset = equal weights — original behavior; 0.7-0.8 prevents promotion of mutants that lose to current but beat weak historicals) |
 | `SEED` | 2024 | RNG seed |
 | `OUT` | `runs/coevolve` | output dir |
 
