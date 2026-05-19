@@ -1,61 +1,69 @@
-# Phase 1: CPU smoke test using PettingZoo MPE simple_tag_v3 (predator-prey style)
-import os, csv, argparse, yaml, numpy as np
+"""Phase 1 CPU smoke test for the predator-prey baseline.
+
+Trains two shared-policy PPO agents — one for predators, one for prey —
+on PettingZoo MPE ``simple_tag_v3``, logs CSV metrics and a return plot
+per run dir, and (optionally) records trajectories for later replay.
+"""
+from __future__ import annotations
+
+import argparse
+import csv
+import json
+import os
 from datetime import datetime, UTC
+from typing import Dict, List
+
+import numpy as np
+import torch
+import yaml
+
 import matplotlib
-matplotlib.use("Agg")  # headless backend for Colab/servers
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from train.ppo import PPO, PPOConfig, flatten_obs, set_seed
+from envs.predator_prey import make_env, reset as env_reset, step as env_step, team_of, TEAM_PREDATOR, TEAM_PREY
+from train.ppo import PPO, PPOConfig, flatten_obs, set_seed, empty_rollout, append_step
+from train.tools.recorder import TrajectoryRecorder
 
 
-def make_env(n_predators=2, n_prey=2, max_cycles=200, seed=42):
-    """Adversaries = predators, Good agents = prey."""
-    from pettingzoo.mpe import simple_tag_v3
-    env = simple_tag_v3.parallel_env(
-        num_adversaries=n_predators,
-        num_good=n_prey,
-        num_obstacles=0,
-        max_cycles=max_cycles,
-        continuous_actions=False,
-        render_mode=None,
+def ensure_dir(path: str) -> None:
+    os.makedirs(path, exist_ok=True)
+
+
+def _build_ppos(train_cfg: dict, obs_dims: Dict[str, int], act_dim: int) -> Dict[str, PPO]:
+    pcfg = PPOConfig(
+        lr=float(train_cfg.get("lr", 3e-4)),
+        gamma=float(train_cfg.get("gamma", 0.99)),
+        gae_lambda=float(train_cfg.get("gae_lambda", 0.95)),
+        clip_coef=float(train_cfg.get("clip_coef", 0.2)),
+        ent_coef=float(train_cfg.get("ent_coef", 0.01)),
+        vf_coef=float(train_cfg.get("vf_coef", 0.5)),
+        update_epochs=int(train_cfg.get("update_epochs", 4)),
+        batch_size=int(train_cfg.get("batch_size", 2048)),
+        minibatch_size=int(train_cfg.get("minibatch_size", 256)),
+        max_grad_norm=float(train_cfg.get("max_grad_norm", 0.5)),
+        hidden=int(train_cfg.get("hidden", 128)),
     )
-    env.reset(seed=seed)
-    return env
+    return {team: PPO(obs_dims[team], act_dim, pcfg) for team in obs_dims}
 
 
-def ensure_dir(p: str):
-    os.makedirs(p, exist_ok=True)
-
-
-def _reset(env, seed=None):
-    """Compat: parallel_env.reset may return (obs, info)."""
-    out = env.reset(seed=seed)
-    if isinstance(out, tuple) and len(out) == 2:
-        return out[0]
+def _split_by_team(agents: List[str], obs_list: List[np.ndarray]) -> Dict[str, tuple]:
+    by_team: Dict[str, List[int]] = {TEAM_PREDATOR: [], TEAM_PREY: []}
+    for i, a in enumerate(agents):
+        by_team[team_of(a)].append(i)
+    out = {}
+    for team, idxs in by_team.items():
+        if not idxs:
+            continue
+        out[team] = (
+            np.stack([obs_list[i] for i in idxs], axis=0),
+            [agents[i] for i in idxs],
+            idxs,
+        )
     return out
 
 
-def _step(env, actions):
-    """
-    Compat wrapper:
-      Newer PettingZoo parallel step -> (next_obs, rewards, terminations, truncations, infos)
-      Older -> (next_obs, rewards, dones, infos)
-    Returns: next_obs, rewards, done_any, infos
-    """
-    out = env.step(actions)
-    if isinstance(out, tuple) and len(out) == 5:
-        next_obs, rewards, terminations, truncations, infos = out
-        done_any = bool(any(terminations.values()) or any(truncations.values()))
-        return next_obs, rewards, done_any, infos
-    elif isinstance(out, tuple) and len(out) == 4:
-        next_obs, rewards, dones, infos = out
-        done_any = bool(any(dones.values()))
-        return next_obs, rewards, done_any, infos
-    else:
-        raise RuntimeError("Unexpected step() return format from PettingZoo env.")
-
-
-def main(cfg_path, override_eps=None, save_dir=None):
+def main(cfg_path: str, override_eps: int | None = None, save_dir: str | None = None) -> str:
     with open(cfg_path, "r") as f:
         cfg = yaml.safe_load(f)
 
@@ -65,100 +73,172 @@ def main(cfg_path, override_eps=None, save_dir=None):
     env_cfg = cfg.get("env", {})
     max_steps = int(env_cfg.get("max_steps", 200))
     n_pred = int(env_cfg.get("n_predators", 2))
-    n_ev = int(env_cfg.get("n_prey", 2))
+    n_prey = int(env_cfg.get("n_prey", 2))
 
     total_episodes = int(override_eps or cfg.get("train", {}).get("total_episodes", 500))
 
-    run_id = datetime.now(UTC).strftime("run_%Y%m%d_%H%M")
-    out_dir = save_dir or cfg.get("logging", {}).get("save_dir", "artifacts/")
-    out_dir = os.path.join(out_dir, run_id)
+    rec_cfg = cfg.get("recording", {}) or {}
+    rec_enabled = bool(rec_cfg.get("enabled", False))
+    rec_sample_rate = int(rec_cfg.get("sample_rate", 1))
+
+    run_id = datetime.now(UTC).strftime("run_%Y%m%d_%H%M%S")
+    out_root = save_dir or cfg.get("logging", {}).get("save_dir", "artifacts/")
+    out_dir = os.path.join(out_root, run_id)
     plots_dir = os.path.join(out_dir, "plots")
-    ensure_dir(out_dir); ensure_dir(plots_dir)
+    ensure_dir(out_dir)
+    ensure_dir(plots_dir)
 
-    env = make_env(n_predators=n_pred, n_prey=n_ev, max_cycles=max_steps, seed=seed)
+    env = make_env(n_predators=n_pred, n_prey=n_prey, max_cycles=max_steps, seed=seed)
+    obs0 = env_reset(env, seed=seed)
+    obs_list, agents = flatten_obs(obs0)
+    act_dim = int(env.action_space(agents[0]).n)
 
-    # Initial observation (handle tuple form)
-    obs0 = _reset(env, seed=seed)
-    obs_arr, agents = flatten_obs(obs0)
-    obs_dim = obs_arr.shape[1]
-    act_dim = env.action_space(agents[0]).n
+    team_dims: Dict[str, int] = {}
+    for i, a in enumerate(agents):
+        team_dims.setdefault(team_of(a), obs_list[i].shape[0])
 
-    ppo = PPO(
-        obs_dim,
-        act_dim,
-        PPOConfig(
-            lr=float(cfg["train"].get("lr", 3e-4)),
-            gamma=float(cfg["train"].get("gamma", 0.99)),
-            clip_coef=float(cfg["train"].get("clip_coef", 0.2)),
-            ent_coef=float(cfg["train"].get("ent_coef", 0.01)),
-            vf_coef=float(cfg["train"].get("vf_coef", 0.5)),
-            update_epochs=int(cfg["train"].get("update_epochs", 4)),
-            batch_size=int(cfg["train"].get("batch_size", 2048)),
-            hidden=128,
-        ),
-    )
+    ppos = _build_ppos(cfg.get("train", {}) or {}, team_dims, act_dim)
+
+    manifest = {
+        "run_id": run_id,
+        "seed": seed,
+        "config_path": os.path.abspath(cfg_path),
+        "env": {"n_predators": n_pred, "n_prey": n_prey, "max_steps": max_steps, "act_dim": act_dim},
+        "team_obs_dims": team_dims,
+        "total_episodes": total_episodes,
+        "recording": {"enabled": rec_enabled, "sample_rate": rec_sample_rate},
+    }
+    with open(os.path.join(out_dir, "manifest.json"), "w") as f:
+        json.dump(manifest, f, indent=2)
 
     metrics_path = os.path.join(out_dir, "metrics.csv")
     with open(metrics_path, "w", newline="") as f:
-        csv.writer(f).writerow(["episode", "return_mean"])
+        csv.writer(f).writerow(
+            [
+                "episode", "return_mean",
+                "predator_return", "prey_return",
+                "steps",
+                "pred_pg_loss", "pred_v_loss", "pred_entropy",
+                "prey_pg_loss", "prey_v_loss", "prey_entropy",
+            ]
+        )
 
-    returns = []
-    storage = {"obs": [], "acts": [], "logps": [], "rews": [], "dones": [], "vals": []}
+    recorder = None
+    if rec_enabled:
+        ensure_dir(os.path.join(out_dir, "replays"))
+        recorder = TrajectoryRecorder(
+            out_dir=out_dir,
+            sample_rate=rec_sample_rate,
+            also_npz=True,
+            seed=seed,
+            env_meta={"n_predators": n_pred, "n_prey": n_prey, "max_steps": max_steps},
+        )
 
-    for ep in range(1, total_episodes + 1):
-        obs = _reset(env, seed=seed + ep)
-        ep_ret = 0.0
-        done_any = False
+    returns_mean: List[float] = []
+    returns_pred: List[float] = []
+    returns_prey: List[float] = []
 
-        while not done_any:
-            obs_arr, agents = flatten_obs(obs)
-            obs_t = np.asarray(obs_arr, dtype=np.float32)
+    try:
+        for ep in range(1, total_episodes + 1):
+            obs = env_reset(env, seed=seed + ep)
+            buf = empty_rollout()
+            ep_ret_per_agent: Dict[str, float] = {a: 0.0 for a in agents}
+            done_any = False
+            steps = 0
 
-            import torch
-            with torch.no_grad():
-                a, logp, v = ppo.ac.step(torch.from_numpy(obs_t))
+            while not done_any:
+                obs_list, step_agents = flatten_obs(obs)
+                per_team = _split_by_team(step_agents, obs_list)
 
-            acts = {agent: int(a[i].item()) for i, agent in enumerate(agents)}
-            next_obs, rewards, done_any, infos = _step(env, acts)
+                logps_all = np.zeros(len(step_agents), dtype=np.float32)
+                vals_all = np.zeros(len(step_agents), dtype=np.float32)
+                acts_dict: Dict[str, int] = {}
+                with torch.no_grad():
+                    for team, (team_obs, team_agents, idxs) in per_team.items():
+                        a_t, logp_t, v_t = ppos[team].ac.step(torch.from_numpy(team_obs))
+                        for k, agent in enumerate(team_agents):
+                            acts_dict[agent] = int(a_t[k].item())
+                            logps_all[idxs[k]] = float(logp_t[k].item())
+                            vals_all[idxs[k]] = float(v_t[k].item())
 
-            # store per-agent, then average to single-trajectory view
-            storage["obs"].extend(obs_t)
-            storage["acts"].extend([acts[a] for a in agents])
-            storage["logps"].extend([logp[i].item() for i in range(len(agents))])
-            storage["vals"].extend([v[i].item() for i in range(len(agents))])
-            storage["rews"].append(np.mean(list(rewards.values())))
-            storage["dones"].append(float(done_any))
+                next_obs, rewards, done_any, _info = env_step(env, acts_dict)
+                append_step(buf, step_agents, obs_list, acts_dict, logps_all, vals_all, rewards, done_any)
+                if recorder is not None:
+                    recorder.record(ep, obs, acts_dict, rewards, done_any)
 
-            ep_ret += np.sum(list(rewards.values()))
-            obs = next_obs
+                for a in step_agents:
+                    ep_ret_per_agent[a] += float(rewards[a])
+                obs = next_obs
+                steps += 1
 
-        # PPO update on episode buffer
-        ppo.update(storage["obs"], storage["acts"], storage["logps"],
-                   storage["rews"], storage["dones"], storage["vals"])
-        # clear storage
-        for k in storage:
-            storage[k] = []
+            team_updates = {TEAM_PREDATOR: None, TEAM_PREY: None}
+            for team in ppos:
+                team_agents = [a for a in agents if team_of(a) == team]
+                if not team_agents:
+                    continue
+                team_updates[team] = ppos[team].update(
+                    {a: buf["obs"].get(a, []) for a in team_agents},
+                    {a: buf["acts"].get(a, []) for a in team_agents},
+                    {a: buf["logps"].get(a, []) for a in team_agents},
+                    {a: buf["rews"].get(a, []) for a in team_agents},
+                    {a: buf["dones"].get(a, []) for a in team_agents},
+                    {a: buf["vals"].get(a, []) for a in team_agents},
+                )
 
-        returns.append(ep_ret / max(1, len(agents)))
-        with open(metrics_path, "a", newline="") as f:
-            csv.writer(f).writerow([ep, returns[-1]])
+            pred_ret = float(np.mean([ep_ret_per_agent[a] for a in agents if team_of(a) == TEAM_PREDATOR] or [0.0]))
+            prey_ret = float(np.mean([ep_ret_per_agent[a] for a in agents if team_of(a) == TEAM_PREY] or [0.0]))
+            mean_ret = float(np.mean(list(ep_ret_per_agent.values())))
+            returns_mean.append(mean_ret)
+            returns_pred.append(pred_ret)
+            returns_prey.append(prey_ret)
 
-        if ep % int(cfg["logging"].get("plot_every", 50)) == 0 or ep == total_episodes:
-            xs = np.arange(1, len(returns) + 1)
-            window = min(50, len(returns))
-            ma = np.convolve(returns, np.ones(window) / window, mode="valid")
-            plt.figure()
-            plt.plot(xs, returns, label="return")
-            if len(ma) > 1:
-                plt.plot(np.arange(window, len(returns) + 1), ma, label=f"MA{window}")
-            plt.xlabel("episode"); plt.ylabel("avg return per-agent"); plt.legend()
-            plt.tight_layout()
-            plt.savefig(os.path.join(plots_dir, "return.png"))
-            plt.close()
-            print(f"[{ep}/{total_episodes}] mean return (last 10): {np.mean(returns[-10:]):.3f}")
+            pu = team_updates.get(TEAM_PREDATOR) or {"pg_loss": 0.0, "v_loss": 0.0, "entropy": 0.0}
+            yu = team_updates.get(TEAM_PREY) or {"pg_loss": 0.0, "v_loss": 0.0, "entropy": 0.0}
+            with open(metrics_path, "a", newline="") as f:
+                csv.writer(f).writerow(
+                    [
+                        ep, mean_ret, pred_ret, prey_ret, steps,
+                        pu["pg_loss"], pu["v_loss"], pu["entropy"],
+                        yu["pg_loss"], yu["v_loss"], yu["entropy"],
+                    ]
+                )
 
-    print(f"Saved metrics to: {metrics_path}")
-    print(f"Saved plot to: {os.path.join(plots_dir, 'return.png')}")
+            plot_every = int(cfg.get("logging", {}).get("plot_every", 50))
+            if ep % plot_every == 0 or ep == total_episodes:
+                _plot(returns_mean, returns_pred, returns_prey, plots_dir)
+                tail = returns_mean[-min(10, len(returns_mean)):]
+                print(
+                    f"[{ep}/{total_episodes}] mean={np.mean(tail):.3f} "
+                    f"pred={np.mean(returns_pred[-10:]):.3f} prey={np.mean(returns_prey[-10:]):.3f} "
+                    f"steps={steps}"
+                )
+    finally:
+        if recorder is not None:
+            recorder.close()
+        env.close()
+
+    print(f"Saved metrics -> {metrics_path}")
+    print(f"Saved plot   -> {os.path.join(plots_dir, 'return.png')}")
+    print(f"Run dir      -> {out_dir}")
+    return out_dir
+
+
+def _plot(returns_mean: List[float], returns_pred: List[float], returns_prey: List[float], plots_dir: str) -> None:
+    xs = np.arange(1, len(returns_mean) + 1)
+    window = min(50, len(returns_mean))
+    plt.figure()
+    plt.plot(xs, returns_mean, label="mean", alpha=0.6)
+    plt.plot(xs, returns_pred, label="predator", alpha=0.6)
+    plt.plot(xs, returns_prey, label="prey", alpha=0.6)
+    if window > 1:
+        ma = np.convolve(returns_mean, np.ones(window) / window, mode="valid")
+        plt.plot(np.arange(window, len(returns_mean) + 1), ma, label=f"mean MA{window}", linewidth=2)
+    plt.xlabel("episode")
+    plt.ylabel("avg return per-agent")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(os.path.join(plots_dir, "return.png"))
+    plt.close()
 
 
 if __name__ == "__main__":

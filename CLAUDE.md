@@ -4,35 +4,55 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Multi-agent **predator–prey** RL using **PettingZoo MPE `simple_tag_v3`** (adversaries=predators, good=prey) with a **PPO** baseline in PyTorch. Designed to be authored locally / via Gemini and run on **Google Colab** (CPU smoke tests locally, GPU on Colab). The project is early-stage — see `README.md` for phase status.
+Multi-agent **predator–prey** RL on **PettingZoo MPE `simple_tag_v3`** (adversaries=predators, good=prey) with a shared-policy **PPO** baseline in PyTorch. Two policies are trained — one per team — because predators and prey have different observation dims (14 vs 12). Designed for CPU smoke locally and GPU sweeps on Google Colab.
 
 ## Commands
 
 ```bash
 make venv         # create .venv and install requirements.txt
-make test         # pytest -q (currently placeholder)
+make test         # pytest -q (full Phase 1 loop runs under tests/)
 make run_cpu      # python run_cpu.py --config configs/base.yaml
 make clean        # remove __pycache__ / .pytest_cache
 
-# Run a short smoke (e.g. 5 episodes to a custom dir)
-python run_cpu.py --config configs/base.yaml --episodes 5 --save_dir artifacts/
+# Fast end-to-end smoke (2 episodes, ~2s) — exactly what CI runs
+SDL_VIDEODRIVER=dummy python run_cpu.py --config configs/smoke.yaml --episodes 2 --save_dir /tmp/smoke
 
-# Run a single test
-python -m pytest tests/test_smoke.py::test_placeholder -q
+# Single test
+SDL_VIDEODRIVER=dummy python -m pytest tests/test_smoke.py::test_run_cpu_end_to_end -q
+
+# Replay a recorded trajectory to MP4
+python -m train.tools.replay --npz <run>/trajectory.npz --out <run>/replays/ep1.mp4 \
+    --episode 1 --n_predators 2 --n_prey 2 --max_cycles 200
 ```
+
+`pygame` is a transitive dep (MPE renderer); `requirements.txt` does not pin it — install separately. On headless boxes (Colab/CI), export `SDL_VIDEODRIVER=dummy` before any env construction; `envs.predator_prey.make_env` sets it as a fallback via `setdefault`, but earlier pygame imports can lose the race.
 
 ## Architecture
 
-- **Entrypoint is `run_cpu.py` at the repo root** — the file `train/run_cpu.py` is an empty stub (1 byte placeholder); do not edit it expecting to change behavior. The Makefile's `run_cpu` target invokes the root file.
-- `run_cpu.py` builds a PettingZoo **parallel_env** from `simple_tag_v3` and drives an episode loop that: flattens per-agent obs into a batch, calls `ppo.ac.step(...)` to act for all agents jointly, stores a single shared trajectory (rewards are averaged across agents per step), then calls `ppo.update(...)` at episode end.
-- **PettingZoo API compat:** `_reset()` and `_step()` in `run_cpu.py` normalize both old (4-tuple) and new (5-tuple) PettingZoo return shapes. Preserve these wrappers when modifying the loop — Colab and local envs may pin different PettingZoo versions.
-- **`train/ppo.py` is currently incomplete** — it ships only a patch fragment containing `_compute_returns` and `update`, but `run_cpu.py` imports `PPO`, `PPOConfig`, `flatten_obs`, and `set_seed` from it. Restoring/adding the class scaffolding (`PPO` with an `ac` actor-critic exposing `.actor`, `.critic`, and `.step(obs)->(a, logp, v)`, a `PPOConfig` dataclass, `flatten_obs(obs_dict)->(np.ndarray, agent_list)`, and `set_seed(seed)`) is the first thing to do before `run_cpu.py` will execute.
-- **Config-driven**: `configs/base.yaml` is the canonical config. Anything tunable (seed, env sizing, PPO hyperparams, logging cadence) should be added there rather than hard-coded.
-- **Outputs**: each run writes to `artifacts/run_YYYYMMDD_HHMM/` containing `metrics.csv` and `plots/return.png`. The whole `artifacts/` tree is gitignored — link large outputs from `docs/run_log.md` or Google Drive instead of committing them.
+### Entrypoint
+`run_cpu.py` at the repo root. It builds **one `PPO` per team** (keyed by `TEAM_PREDATOR` / `TEAM_PREY` from `envs.predator_prey.team_of`), routes per-step observations through the matching policy, then calls `PPO.update` once per episode with per-agent trajectory buffers.
+
+### Modules
+- `envs/predator_prey.py` — `make_env`, `reset`, `step` compat wrappers (handle both 4- and 5-tuple PettingZoo `step` returns), and `team_of` to map agent names to teams. The MPE renderer needs pygame + an SDL driver, so the factory exports `SDL_VIDEODRIVER=dummy` if unset.
+- `train/ppo.py` — `PPO`, `PPOConfig`, `ActorCritic`, plus the rollout helpers `flatten_obs`, `empty_rollout`, `append_step`, and `set_seed`. `flatten_obs` returns a **list of per-agent arrays** (not a stacked ndarray) because the two teams have different obs dims — do not change it to `np.stack`. `_gae` computes GAE-lambda per-agent and bootstraps with 0 at the trajectory end (fine for episodic rollouts; revisit if you add bootstrapped truncation).
+- `train/tools/recorder.py` — `TrajectoryRecorder` streams JSONL per step and dumps a compact NPZ on `close()` (or context exit). `sample_rate=k` keeps every k-th step.
+- `train/tools/replay.py` — re-runs the env with the same seed + recorded actions, captures `rgb_array` frames, writes MP4 via `imageio[ffmpeg]`. Replay is deterministic only if env, seed, and action sequence match what was recorded.
+- `configs/base.yaml` — full training run. `configs/smoke.yaml` — tiny config (1v1, 20 steps, 3 episodes, hidden=32, recording on); used by tests and for any "does it still work" check.
+
+### Multi-agent rollout shape
+Each transition is per-(step, agent). The per-team `PPO.update` receives `{agent_id: list_of_T_values}` dicts for `obs/acts/logps/rews/dones/vals`, computes GAE for each agent's contiguous trajectory, then concatenates across agents for shuffled minibatch SGD. If you add new buffer fields, add them to **both** `empty_rollout()` and `append_step()` in `train/ppo.py` and the per-agent slicing in `run_cpu.main`.
+
+### Per-run artifacts
+Each invocation writes to `artifacts/run_YYYYMMDD_HHMMSS/`:
+- `manifest.json` — seed, env config, team obs dims, total_episodes, recording state
+- `metrics.csv` — per-episode return (mean / predator / prey), step count, per-team `pg_loss`/`v_loss`/`entropy`
+- `plots/return.png` — three return curves + moving avg
+- `trajectory.jsonl` + `trajectory.npz` — only when `recording.enabled: true`
+
+The whole `artifacts/` tree is gitignored. Link large outputs from `docs/run_log.md` or Google Drive.
 
 ## Conventions
-
-- **Branches**: `main` (stable), `dev` (work), `feat/<topic>`. PR template at `.github/PULL_REQUEST_TEMPLATE.md` expects a Colab-style validation snippet (`!pip install -r requirements.txt` then `!python run_cpu.py ...`).
-- **Run log**: append one row per experiment to `docs/run_log.md` (date, commit, config, seed, artifact link, notes).
-- **CI**: the workflow lives at the unusual nested path `.github/ISSUE_TEMPLATE/.github/workflows/ci.yml` (Python 3.10, runs `pytest -q` on pushes to `main`/`dev` and on PRs). If you move it to the conventional `.github/workflows/ci.yml`, verify the move on GitHub before relying on it.
-- **Headless plotting**: matplotlib is forced to the `Agg` backend in `run_cpu.py` for Colab/server use — keep new plotting code headless-safe.
+- Branches: `main` (stable), `dev` (work), `feat/<topic>`. PR template at `.github/PULL_REQUEST_TEMPLATE.md` expects a Colab-style validation snippet (`!pip install -r requirements.txt` then `!python run_cpu.py ...`).
+- Run log: append one row per real experiment to `docs/run_log.md`.
+- CI: `.github/workflows/ci.yml` — Python 3.11, installs SDL2 system libs + pygame, runs `pytest -q` (the full Phase 1 loop) on PRs and on `main`/`dev` pushes.
+- Headless plotting: matplotlib is forced to `Agg` in `run_cpu.py` — keep new plotting code headless-safe.

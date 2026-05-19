@@ -9,55 +9,55 @@ Python-first project to explore **predator–prey** dynamics with **multi-agent 
 - **(Optional):** Jules for repo-wide PRs
 
 ## Project Status
-- **Phase:** 0 — Foundation & Guardrails
-- **Next Up:** Phase 1 — Baseline PPO (env + CPU smoke test)
-- **Last Run:** _N/A_ (Phase 1 will populate)
+- **Phase:** 1 — Baseline PPO + trajectory recorder/replay
+- **Next Up:** Phase 2 — Novelty/QD hooks; GPU sweeps; richer envs
+- **Last Run:** see `docs/run_log.md`
 
 ## Structure
-envs/ agents/ train/ tools/ configs/ artifacts/ tests/ docs/ .github/
+```
+envs/                MPE simple_tag wrapper + team helpers
+agents/              (reserved for evolved/QD agent variants)
+train/               ppo.py (shared-policy PPO per team)
+train/tools/         recorder.py, replay.py
+configs/             base.yaml (training), smoke.yaml (CI/dev)
+artifacts/           per-run output dirs (gitignored)
+tests/               pytest smoke suite (runs full loop on smoke.yaml)
+docs/                run_log.md, prompts.md
+.github/             workflows/ci.yml, PR + issue templates
+```
 
+## Quickstart
 
-## Conventions
-- Branches: `main` (stable), `dev` (work), `feat/<topic>`
-- Artifacts: `artifacts/run_YYYYMMDD_HHMM/` → {metrics.csv, plots/*.png, replays/*.mp4, manifest.json}
-- Run Log: `docs/run_log.md` (one line per experiment)
+### Local
+```bash
+make venv        # optional venv
+pip install -r requirements.txt
+pip install pygame                    # MPE dep
+SDL_VIDEODRIVER=dummy pytest -q       # ~3s smoke
+python run_cpu.py --config configs/base.yaml --episodes 500
+```
 
-## Quickstart (Colab)
+### Colab
 ```bash
 !git clone https://github.com/<you>/digital-evo-rl.git
 %cd digital-evo-rl
-!pip install -r requirements.txt
-# Phase 1 will add run_cpu.py
+!pip install -r requirements.txt pygame
+!python run_cpu.py --config configs/base.yaml --episodes 500
+```
+
+### Replay a recorded trajectory
+Set `recording.enabled: true` in the config (or use `configs/smoke.yaml`), then:
+```bash
+python -m train.tools.replay \
+  --npz artifacts/<run>/trajectory.npz \
+  --out  artifacts/<run>/replays/episode_1.mp4 \
+  --episode 1 --n_predators 2 --n_prey 2 --max_cycles 200
+```
+
+## Conventions
+- Branches: `main` (stable), `dev` (work), `feat/<topic>`
+- Artifacts: `artifacts/run_YYYYMMDD_HHMMSS/` → `{metrics.csv, plots/*.png, replays/*.mp4, trajectory.{jsonl,npz}, manifest.json}`
+- Run Log: `docs/run_log.md` (one line per experiment)
 
 ## Privacy
-
 Repo stays private. Large artifacts live in Google Drive; link them from the Run Log or Releases.
-
-
-### `configs/base.yaml`
-```yaml
-seed: 42
-env:
-  id: predator_prey_v0
-  grid_size: 7
-  n_predators: 2
-  n_prey: 2
-  max_steps: 200
-train:
-  algo: ppo
-  total_episodes: 500
-  gamma: 0.99
-  lr: 3.0e-4
-  batch_size: 2048
-  update_epochs: 4
-  clip_coef: 0.2
-  ent_coef: 0.01
-  vf_coef: 0.5
-logging:
-  save_dir: artifacts/
-  csv: true
-  plots: true
-  plot_every: 50
-recording:
-  enabled: false
-  sample_rate: 1

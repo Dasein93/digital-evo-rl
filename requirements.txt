@@ -7,3 +7,4 @@ matplotlib>=3.7,<4
 tqdm>=4.65,<5
 PyYAML>=6,<7
 imageio[ffmpeg]>=2.31,<3
+pygame>=2.5,<3
