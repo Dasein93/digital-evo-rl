@@ -54,8 +54,11 @@ ssh "$VPS_HOST" "set -e
     ./venv/bin/pip install --upgrade pip wheel
     ./venv/bin/pip install torch --index-url https://download.pytorch.org/whl/cpu
     ./venv/bin/pip install -r requirements.txt
+    ./venv/bin/pip install pytest
   else
-    echo 'venv exists; skipping install (delete venv/ to force reinstall).'
+    # Ensure pytest is present even on re-runs of an existing venv.
+    ./venv/bin/pip show pytest >/dev/null 2>&1 || ./venv/bin/pip install pytest
+    echo 'venv exists; pytest verified (delete venv/ to force full reinstall).'
   fi"
 
 # 6. Quick smoke test on the remote side.

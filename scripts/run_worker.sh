@@ -33,6 +33,8 @@ N_OBSTACLES="${N_OBSTACLES:-2}"
 MAX_CYCLES="${MAX_CYCLES:-100}"
 WORKERS="${WORKERS:-2}"                                       # 2 vCPUs -> 2 workers
 NUM_THREADS="${NUM_THREADS:-1}"                               # per-process thread cap
+HOF_K="${HOF_K:-0}"                                           # Hall of Fame size per mutant (0 = off)
+HOF_EVAL_EPS="${HOF_EVAL_EPS:-1}"                             # eps per HoF opponent
 SEED="${SEED:-2024}"
 LOG="${LOG:-logs/coevolve.log}"
 
@@ -66,6 +68,7 @@ while true; do
     --n_predators "$N_PRED" --n_prey "$N_PREY" --n_obstacles "$N_OBSTACLES" \
     --max_cycles "$MAX_CYCLES" --seed "$SEED" \
     --workers "$WORKERS" --num_threads "$NUM_THREADS" \
+    --hof_k "$HOF_K" --hof_eval_eps "$HOF_EVAL_EPS" \
     --resume >> "$LOG" 2>&1
   rc=$?
 

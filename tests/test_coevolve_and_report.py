@@ -94,6 +94,32 @@ def test_coevolve_with_workers_matches_serial(trained_ckpt: Path, tmp_path: Path
     assert len(s_par["history"]) == 2
 
 
+def test_hall_of_fame_grows_each_generation(trained_ckpt: Path, tmp_path: Path):
+    """With hof_k>0 the HoF should be populated and the fitness selection should
+    still complete cleanly. We can't easily assert behavior is better, only that
+    the wiring works end-to-end and the HoF sample size matches what's available."""
+    from train.tools.coevolve import coevolve
+    from agents.qd import MAPElitesConfig
+    s = coevolve(
+        seed_ckpt_dir=str(trained_ckpt),
+        out_dir=str(tmp_path / "coev_hof"),
+        generations=3, n_mutants=2, sigma=0.3, eval_eps=1,
+        n_predators=1, n_prey=1, n_obstacles=0, max_cycles=10,
+        seed=55, device="cpu",
+        qd_cfg=MAPElitesConfig(grid_shape=(3, 3)),
+        hof_k=2, hof_eval_eps=1,
+    )
+    # 3 gens × 2 teams = 6 records. HoF starts empty; by gen 2 it has 1 entry,
+    # by gen 3 it has 2 entries — so hof_size_used should be 0, 0 (gen 1),
+    # then 1, 1 (gen 2), then 2, 2 (gen 3).
+    by_gen = {}
+    for r in s["history"]:
+        by_gen.setdefault(r["generation"], []).append(r["hof_size_used"])
+    assert by_gen[1] == [0, 0]                  # HoF empty at gen 1
+    assert all(x >= 1 for x in by_gen[2])       # HoF has at least 1 by gen 2
+    assert all(x >= 2 for x in by_gen[3])       # HoF has at least 2 by gen 3
+
+
 def test_report_bundles_artifacts(trained_ckpt: Path, tmp_path: Path):
     """Report should be one self-contained HTML file with embedded images + JSON blocks."""
     from train.tools.report import build_report

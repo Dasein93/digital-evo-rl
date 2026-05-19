@@ -9,8 +9,8 @@ Python-first project to explore **predator–prey** dynamics with **multi-agent 
 - **(Optional):** Jules for repo-wide PRs
 
 ## Project Status
-- **Phase:** 7 — Parallel mutant evaluation, `--resume` for multi-day runs, VPS deployment scripts
-- **Next Up:** Hall-of-Fame eval (test new champions against historical opponents to detect cycling); per-layer mutation sigma; Colab GPU vectorized envs
+- **Phase:** 8 — Hall of Fame (evaluate mutants against historical opponents to break non-transitive cycling)
+- **Next Up:** per-layer mutation sigma; vec-env batching for Colab GPU; longer (50+ gen) runs with HoF for statistically meaningful arms-race plots
 - **Last Run:** see `docs/run_log.md`
 
 ## Structure
@@ -120,6 +120,8 @@ python -m train.tools.coevolve \
   --n_predators 2 --n_prey 2 --n_obstacles 2 --max_cycles 100 \
   --workers 2 --num_threads 1                  # parallel; tune to n_cores
 # add --resume to continue from the highest finished gen_NNN in --out
+# add --hof_k 3 to evaluate each mutant against the current opponent +
+#   3 random historical opponents (Phase 8 — breaks non-transitive cycling)
 ```
 
 ### VPS deployment (Phase 7)

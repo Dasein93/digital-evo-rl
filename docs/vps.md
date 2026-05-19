@@ -102,6 +102,8 @@ rsync -avh stepan-vps:/opt/digital-evo-rl/runs/coevolve/ ./local_coev/
 | `MAX_CYCLES` | 100 | episode length |
 | `WORKERS` | 2 | parallel mutant evaluators |
 | `NUM_THREADS` | 1 | PyTorch threads per worker process |
+| `HOF_K` | 0 | Hall of Fame size (0 = off; 3 is a good default) |
+| `HOF_EVAL_EPS` | 1 | episodes per HoF opponent |
 | `SEED` | 2024 | RNG seed |
 | `OUT` | `runs/coevolve` | output dir |
 
@@ -109,6 +111,28 @@ Example: a quick smoke run
 ```bash
 ssh stepan-vps "cd /opt/digital-evo-rl && \
   GENERATIONS=4 N_MUTANTS=10 ./scripts/run_worker.sh"
+```
+
+### Hall of Fame: turning cycling into stable progress
+
+Plain co-evolution shows non-monotone champion fitness — predators
+forget how to beat older prey strategies once new prey appear. `HOF_K`
+fixes this: each mutant is evaluated against the current opponent plus
+`HOF_K` randomly-sampled historical opponents, and the **mean** fitness
+across all of them is what selection uses. A mutant that beats the latest
+opponent but loses to gen-5 prey doesn't get promoted.
+
+Cost: each mutant runs `eval_eps + hof_k * hof_eval_eps` episodes
+instead of `eval_eps`. With defaults `eval_eps=2`, `hof_k=3`,
+`hof_eval_eps=1` that's 5× the rollout work — but the per-mutant fitness
+estimate is far less noisy, so generations stabilise.
+
+```bash
+# Side-by-side comparison run: HoF off vs HoF on, same seed.
+ssh stepan-vps "cd /opt/digital-evo-rl && \
+  HOF_K=0 OUT=runs/coev_nohof tmux new-session -d -s evo_nohof './scripts/run_worker.sh'"
+ssh stepan-vps "cd /opt/digital-evo-rl && \
+  HOF_K=3 OUT=runs/coev_hof tmux new-session -d -s evo_hof './scripts/run_worker.sh'"
 ```
 
 ## When something goes wrong
