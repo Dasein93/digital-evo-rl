@@ -1,12 +1,29 @@
-# Phase 10: large-scale long-run training.
-# 12v12 population on an 80x80 grid (6400 cells, 4x the area of preview_grid).
-# Heavier net (hidden=256) for the bigger obs dim:
-#   obs_dim = 3 + 3*(24-1) + 2*30 + 2*30 = 192 per agent
-# Per-episode PPO buffer ~3.7 MB; 5000 episodes ~18 GB cumulative gradient
-# work; on a 2 vCPU box at ~3s/episode that's ~4-5 hours wall clock.
+# Phase 10b: large-scale long-run training, v2 with reward shaping.
 #
-# Defaults are tuned for the VPS run_long.sh launcher, but any host with
-# enough RAM (~2 GB peak) and one or two cores will run it fine.
+# The first big.yaml run (v1, 5000 eps on the VPS) produced essentially
+# zero learning despite stable entropy: returns flat at ~-9.5 across all
+# 5000 episodes. Diagnosis: the env reward signal was too sparse for
+# this scale -- 30 food on 6400 cells (~0.5% density), max_steps=200,
+# and step_cost=0.05 meant gradient updates were dominated by layout
+# noise (e.g. ep 501 spiked pred=+6.67 prey=-25 then collapsed back to
+# baseline). Entropy stayed at ~1.4 (max=1.61) -> exploration was fine,
+# the gradient signal just wasn't large enough to learn from.
+#
+# This v2 changes only the reward / time knobs (env structure unchanged
+# so the same 12v12 population on the 80x80 arena still applies, and a
+# v2 ckpt is shape-compatible with a v1 ckpt):
+#   - catch_reward: 10 -> 25  (2.5x signal per catch)
+#   - food_reward:   5 -> 15  (3x signal per food)
+#   - step_cost:  0.05 -> 0.01  (5x less penalty per step, so exploration is cheap)
+#   - max_steps:   200 -> 300  (50% more time per ep to actually reach things)
+#
+# Net effect on the idle-floor: was 200*0.05=-10, now 300*0.01=-3.
+# So even an agent that does nothing scores -3 vs -10 before. And
+# catching one prey or eating one food now massively dominates the
+# layout noise.
+#
+# Bench: hidden=256 + 24 agents stays the same -> still ~1.7 s/ep
+# on the sandbox, expect ~3 s/ep on the 2 vCPU VPS -> 5000 eps ~ 4 hr.
 seed: 42
 env:
   kind: grid
@@ -16,10 +33,10 @@ env:
   n_prey: 12
   n_obstacles: 30
   n_food: 30
-  max_steps: 200
-  catch_reward: 10.0
-  food_reward: 5.0
-  step_cost: 0.05
+  max_steps: 300        # was 200 -- more time per episode to reach food/prey
+  catch_reward: 25.0    # was 10  -- bigger signal per catch
+  food_reward: 15.0     # was 5   -- bigger signal per food
+  step_cost: 0.01       # was 0.05 -- shrink the per-step tax so exploring far is cheap
 train:
   algo: ppo
   total_episodes: 5000
@@ -40,13 +57,13 @@ logging:
   save_dir: artifacts/
   csv: true
   plots: true
-  plot_every: 50       # plot every 50 eps over 5000 = 100 plot writes (cheap)
+  plot_every: 50
 recording:
-  enabled: false        # 5000 eps x 24 agents x 200 steps would be ~24M log lines
+  enabled: false
 checkpoint:
   enabled: true
-  every: 250            # 20 rollback points across the full run
+  every: 250
 novelty:
-  enabled: false        # BC code is MPE-specific (obs[0:2]=velocity); n/a for grid
+  enabled: false
 qd:
-  enabled: false        # depends on BC; see CLAUDE.md "Grid-env plumbing"
+  enabled: false
