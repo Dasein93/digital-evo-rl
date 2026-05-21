@@ -120,8 +120,8 @@ Plain co-evolution shows non-monotone champion fitness — predators
 forget how to beat older prey strategies once new prey appear. `HOF_K`
 fixes this: each mutant is evaluated against the current opponent plus
 `HOF_K` randomly-sampled historical opponents, and the **mean** fitness
-across all of them is what selection uses. A mutant that beats the latest
-opponent but loses to gen-5 prey doesn't get promoted.
+across all of them is what selection uses (or weighted via
+`HOF_CURRENT_WEIGHT` — see Phase 8b notes in the run log).
 
 Cost: each mutant runs `eval_eps + hof_k * hof_eval_eps` episodes
 instead of `eval_eps`. With defaults `eval_eps=2`, `hof_k=3`,
@@ -130,11 +130,45 @@ estimate is far less noisy, so generations stabilise.
 
 ```bash
 # Side-by-side comparison run: HoF off vs HoF on, same seed.
+# Use tmux -e per-session to avoid the env-var-propagation gotcha
+# (see Phase 8 docs in run_log.md).
 ssh stepan-vps "cd /opt/digital-evo-rl && \
-  HOF_K=0 OUT=runs/coev_nohof tmux new-session -d -s evo_nohof './scripts/run_worker.sh'"
+  tmux new-session -d -s evo_nohof \
+    -e HOF_K=0 -e OUT=runs/coev_nohof -e LOG=logs/coev_nohof.log \
+    ./scripts/run_worker.sh"
 ssh stepan-vps "cd /opt/digital-evo-rl && \
-  HOF_K=3 OUT=runs/coev_hof tmux new-session -d -s evo_hof './scripts/run_worker.sh'"
+  tmux new-session -d -s evo_hof \
+    -e HOF_K=3 -e OUT=runs/coev_hof -e LOG=logs/coev_hof.log \
+    ./scripts/run_worker.sh"
 ```
+
+### Long pure-PPO training (Phase 10 large-scale)
+
+For hours-long training on the bigger grid env (12v12, 80×80, hidden=256
+— see `configs/big.yaml`), there's a separate tmux entrypoint:
+
+```bash
+ssh stepan-vps "cd /opt/digital-evo-rl && \
+  tmux new-session -d -s long ./scripts/run_long.sh"
+ssh stepan-vps "tail -F /opt/digital-evo-rl/logs/long.log"
+```
+
+Knobs (env vars, override before `tmux new-session`):
+
+| var | default | notes |
+|---|---|---|
+| `CONFIG` | `configs/big.yaml` | swap in any other config |
+| `SAVE_DIR` | `runs/long` | parent dir for the `run_YYYYMMDD_HHMMSS/` dir |
+| `NUM_THREADS` | 2 | per-process torch threads; set to vCPU count |
+| `EPISODES` | (config) | override `total_episodes` from config |
+| `SEED` | (config) | override seed from config |
+
+Each run produces a fresh `run_<ts>/` with periodic checkpoints under
+`checkpoints/ep_NNNNNN/` (every 250 episodes in the big config) plus
+`metrics.csv` and `plots/return.png`. If the process crashes mid-run,
+those intermediate checkpoints still work for eval — but **run_cpu
+does not yet have `--resume`**, so re-launching restarts episode 1 in
+a new run dir. Picking up cleanly mid-run would need a dedicated patch.
 
 ## When something goes wrong
 

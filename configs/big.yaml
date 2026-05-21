@@ -1,0 +1,52 @@
+# Phase 10: large-scale long-run training.
+# 12v12 population on an 80x80 grid (6400 cells, 4x the area of preview_grid).
+# Heavier net (hidden=256) for the bigger obs dim:
+#   obs_dim = 3 + 3*(24-1) + 2*30 + 2*30 = 192 per agent
+# Per-episode PPO buffer ~3.7 MB; 5000 episodes ~18 GB cumulative gradient
+# work; on a 2 vCPU box at ~3s/episode that's ~4-5 hours wall clock.
+#
+# Defaults are tuned for the VPS run_long.sh launcher, but any host with
+# enough RAM (~2 GB peak) and one or two cores will run it fine.
+seed: 42
+env:
+  kind: grid
+  width: 80
+  height: 80
+  n_predators: 12
+  n_prey: 12
+  n_obstacles: 30
+  n_food: 30
+  max_steps: 200
+  catch_reward: 10.0
+  food_reward: 5.0
+  step_cost: 0.05
+train:
+  algo: ppo
+  total_episodes: 5000
+  device: cpu
+  num_threads: 2
+  gamma: 0.99
+  gae_lambda: 0.95
+  lr: 3.0e-4
+  batch_size: 2048
+  minibatch_size: 256
+  update_epochs: 4
+  clip_coef: 0.2
+  ent_coef: 0.02
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+  hidden: 256
+logging:
+  save_dir: artifacts/
+  csv: true
+  plots: true
+  plot_every: 50       # plot every 50 eps over 5000 = 100 plot writes (cheap)
+recording:
+  enabled: false        # 5000 eps x 24 agents x 200 steps would be ~24M log lines
+checkpoint:
+  enabled: true
+  every: 250            # 20 rollback points across the full run
+novelty:
+  enabled: false        # BC code is MPE-specific (obs[0:2]=velocity); n/a for grid
+qd:
+  enabled: false        # depends on BC; see CLAUDE.md "Grid-env plumbing"
