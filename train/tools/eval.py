@@ -58,6 +58,9 @@ def evaluate(
     width: int = 20,
     height: int = 20,
     n_food: int = 0,
+    catch_reward: float = 10.0,
+    food_reward: float = 5.0,
+    step_cost: float = 0.05,
 ) -> Dict:
     os.makedirs(out_dir, exist_ok=True)
     ppos, manifest = load_checkpoint(ckpt_dir, device=device)
@@ -70,6 +73,7 @@ def evaluate(
         n_predators=n_predators, n_prey=n_prey, n_obstacles=n_obstacles,
         max_cycles=max_cycles, seed=seed, render_mode=render_mode,
         kind=kind, width=width, height=height, n_food=n_food,
+        catch_reward=catch_reward, food_reward=food_reward, step_cost=step_cost,
     )
 
     all_mean, all_pred, all_prey = [], [], []
@@ -152,6 +156,12 @@ def main() -> None:
     ap.add_argument("--width", type=int, default=20, help="grid env only")
     ap.add_argument("--height", type=int, default=20, help="grid env only")
     ap.add_argument("--n_food", type=int, default=0, help="grid env only")
+    ap.add_argument("--catch_reward", type=float, default=10.0,
+                    help="must match training (default 10 = MPE/preview_grid; v2 big.yaml uses 25)")
+    ap.add_argument("--food_reward", type=float, default=5.0,
+                    help="grid env only; default 5 (preview_grid). v2 big.yaml uses 15")
+    ap.add_argument("--step_cost", type=float, default=0.05,
+                    help="must match training (default 0.05 = MPE/preview_grid; v2 big.yaml uses 0.01)")
     args = ap.parse_args()
     summary = evaluate(
         ckpt_dir=args.ckpt, out_dir=args.out,
@@ -161,6 +171,7 @@ def main() -> None:
         record_first_n=args.record_first_n, fps=args.fps, device=args.device,
         n_obstacles=args.n_obstacles,
         kind=args.kind, width=args.width, height=args.height, n_food=args.n_food,
+        catch_reward=args.catch_reward, food_reward=args.food_reward, step_cost=args.step_cost,
     )
     print(json.dumps({k: v for k, v in summary.items() if k != "manifest"}, indent=2))
 
