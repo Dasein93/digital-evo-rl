@@ -1,9 +1,15 @@
-"""Predator–prey env wrapper around PettingZoo MPE ``simple_tag``.
+"""Predator–prey env factory.
 
-The MPE env names adversaries (predators) ``adversary_*`` and good agents
-(prey) ``agent_*`` and gives them different observation dims (14 vs 12),
-so we expose a ``team_of`` helper to let callers route agents to the
-right shared policy.
+Supports two backends, selected via the ``kind`` argument to ``make_env``:
+- ``"mpe"`` (default): PettingZoo MPE ``simple_tag_v3``. Continuous-ish
+  positions, fixed arena, baked-in reward shaping. What Phase 1-8 used.
+- ``"grid"``: our own grid world (``envs.grid_world.GridWorldEnv``).
+  Arbitrary width/height, configurable obstacles, **respawning food**
+  that prey collect for positive reward. The richer ecosystem that
+  Phase 9 unlocked.
+
+Both backends name predators ``adversary_*`` and prey ``agent_*``, so
+the ``team_of`` helper below works without changes.
 """
 from __future__ import annotations
 
@@ -25,12 +31,40 @@ def make_env(
     max_cycles: int = 200,
     seed: int = 42,
     render_mode: str | None = None,
+    *,
+    kind: str = "mpe",
+    width: int = 20,
+    height: int = 20,
+    n_food: int = 0,
+    catch_reward: float = 10.0,
+    food_reward: float = 5.0,
+    step_cost: float = 0.05,
 ) -> Any:
-    """Create a PettingZoo MPE ``simple_tag`` parallel env.
+    """Build a predator-prey env. Backend selected via ``kind``.
 
-    Forces a headless SDL driver when no display is available so the env
-    can be constructed on Colab / CI without an X server.
+    The MPE-specific args (``n_predators``, ``n_prey``, ``n_obstacles``,
+    ``max_cycles``, ``seed``, ``render_mode``) are accepted by both
+    backends. The grid-only keyword-only args (``width``, ``height``,
+    ``n_food``, reward knobs) are silently ignored by the MPE backend so
+    that callers can pass them without conditional branching.
     """
+    if kind == "grid":
+        from envs.grid_world import GridWorldEnv
+        env = GridWorldEnv(
+            width=width, height=height,
+            n_predators=n_predators, n_prey=n_prey,
+            n_obstacles=n_obstacles, n_food=n_food,
+            max_cycles=max_cycles,
+            catch_reward=catch_reward, food_reward=food_reward, step_cost=step_cost,
+            render_mode=render_mode, seed=seed,
+        )
+        env.reset(seed=seed)
+        return env
+
+    if kind != "mpe":
+        raise ValueError(f"unknown env kind={kind!r}; expected 'mpe' or 'grid'")
+
+    # Default: PettingZoo MPE simple_tag_v3. Force headless SDL on Colab / CI.
     os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
     from pettingzoo.mpe import simple_tag_v3
 

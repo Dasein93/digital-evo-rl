@@ -105,6 +105,14 @@ def main(
     n_pred = int(env_cfg.get("n_predators", 2))
     n_prey = int(env_cfg.get("n_prey", 2))
     n_obstacles = int(env_cfg.get("n_obstacles", 0))
+    # Grid-world only (ignored by MPE backend):
+    env_kind = str(env_cfg.get("kind", "mpe"))
+    grid_w = int(env_cfg.get("width", 20))
+    grid_h = int(env_cfg.get("height", 20))
+    n_food = int(env_cfg.get("n_food", 0))
+    catch_reward = float(env_cfg.get("catch_reward", 10.0))
+    food_reward  = float(env_cfg.get("food_reward",  5.0))
+    step_cost    = float(env_cfg.get("step_cost",    0.05))
 
     total_episodes = int(override_eps or cfg.get("train", {}).get("total_episodes", 500))
     device = _resolve_device(device_override or cfg.get("train", {}).get("device", "cpu"))
@@ -135,7 +143,12 @@ def main(
     plots_dir = os.path.join(out_dir, "plots")
     ensure_dir(out_dir); ensure_dir(plots_dir)
 
-    env = make_env(n_predators=n_pred, n_prey=n_prey, n_obstacles=n_obstacles, max_cycles=max_steps, seed=seed)
+    env = make_env(
+        n_predators=n_pred, n_prey=n_prey, n_obstacles=n_obstacles,
+        max_cycles=max_steps, seed=seed,
+        kind=env_kind, width=grid_w, height=grid_h, n_food=n_food,
+        catch_reward=catch_reward, food_reward=food_reward, step_cost=step_cost,
+    )
     obs0 = env_reset(env, seed=seed)
     obs_list, agents = flatten_obs(obs0)
     act_dim = int(env.action_space(agents[0]).n)
@@ -157,7 +170,14 @@ def main(
         "seed": seed,
         "device": device,
         "config_path": os.path.abspath(cfg_path),
-        "env": {"n_predators": n_pred, "n_prey": n_prey, "n_obstacles": n_obstacles, "max_steps": max_steps, "act_dim": act_dim},
+        "env": {
+            "kind": env_kind,
+            "n_predators": n_pred, "n_prey": n_prey,
+            "n_obstacles": n_obstacles, "n_food": n_food,
+            "width": grid_w, "height": grid_h,
+            "max_steps": max_steps, "act_dim": act_dim,
+            "catch_reward": catch_reward, "food_reward": food_reward, "step_cost": step_cost,
+        },
         "team_obs_dims": team_dims,
         "total_episodes": total_episodes,
         "recording": {"enabled": rec_enabled, "sample_rate": rec_sample_rate},

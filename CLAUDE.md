@@ -33,7 +33,8 @@ python -m train.tools.replay --npz <run>/trajectory.npz --out <run>/replays/ep1.
 `run_cpu.py` at the repo root. It builds **one `PPO` per team** (keyed by `TEAM_PREDATOR` / `TEAM_PREY` from `envs.predator_prey.team_of`), routes per-step observations through the matching policy, then calls `PPO.update` once per episode with per-agent trajectory buffers.
 
 ### Modules
-- `envs/predator_prey.py` — `make_env`, `reset`, `step` compat wrappers (handle both 4- and 5-tuple PettingZoo `step` returns), and `team_of` to map agent names to teams. The MPE renderer needs pygame + an SDL driver, so the factory exports `SDL_VIDEODRIVER=dummy` if unset.
+- `envs/predator_prey.py` — `make_env(kind="mpe"|"grid", ...)` dispatches between the two env backends. Both backends use MPE's agent naming (`adversary_*` / `agent_*`) so `team_of` works unchanged. `reset`/`step` compat wrappers handle both 4- and 5-tuple PettingZoo `step` returns. The MPE renderer needs pygame + an SDL driver, so the factory exports `SDL_VIDEODRIVER=dummy` if unset.
+- `envs/grid_world.py` — Phase 9 custom env. Configurable `width × height` arena with `n_obstacles` impassable cells and `n_food` respawning food items. Action space matches MPE (5-discrete). Same observation for both teams: `[self_x_norm, self_y_norm, self_is_predator, per-other-agent (dx,dy,is_pred), per-obstacle (dx,dy), per-food (dx,dy)]`, so `obs_dim = 3 + 3*(n-1) + 2*n_obstacles + 2*n_food`. Rewards are continuous per-step: predator +`catch_reward` per co-located prey, prey −`catch_reward` per co-located predator and +`food_reward` per co-located food (food respawns), all agents pay `−step_cost` per step. Fully deterministic given seed. Matplotlib renderer scales figure size with grid size.
 - `train/ppo.py` — `PPO`, `PPOConfig`, `ActorCritic`, plus the rollout helpers `flatten_obs`, `empty_rollout`, `append_step`, `set_seed`, and `set_num_threads` (use the last on a low-core CPU host like a 2-vCPU VPS to keep PyTorch from oversubscribing; each parallel worker in `coevolve` calls it with 1). `flatten_obs` returns a **list of per-agent arrays** (not a stacked ndarray) because the two teams have different obs dims — do not change it to `np.stack`. `_gae` computes GAE-lambda per-agent and bootstraps with 0 at the trajectory end (fine for episodic rollouts; revisit if you add bootstrapped truncation). `PPO.__init__` accepts a `device` kwarg; `ActorCritic.step(obs, greedy=True)` uses argmax for eval.
 - `agents/novelty.py` — 4D behavior characteristic `[mean_pos_x, mean_pos_y, mean_speed, action_entropy]` extracted from the first four entries of each obs (consistent across both teams). `NoveltyArchive` is a ring buffer; novelty is mean L2 distance to k nearest neighbors. Empty archive returns 0.0 by convention — the first episode is, by construction, not novel.
 - `agents/qd.py` — `MAPElitesArchive` lays a 2D grid over two BC dimensions (configurable via `qd.bc_dims` / `bc_bounds` / `grid_shape`), stores the highest-fitness policy per cell as a `.pt` state_dict, persists a JSON manifest. `coverage()` = fraction of cells occupied. Used both by the training loop (periodic snapshotting) and by `train.tools.evolve` (mutation-driven filling).
@@ -84,6 +85,16 @@ in an env with a different obstacle count — `load_checkpoint` will
 succeed but the first forward pass will fail with a shape mismatch.
 Every tool that builds an env (`eval`, `evolve`, `tournament`,
 `coevolve`) accepts `--n_obstacles` for this reason; default is 0.
+
+### Grid-env plumbing — partial
+Phase 9 added the grid backend via `make_env(kind="grid", ...)`, but
+**only `run_cpu.py` and `train/tools/eval.py` are wired through**.
+`train/tools/{replay,evolve,tournament,coevolve}.py` still hard-code
+the MPE backend. If you train a checkpoint on the grid env and try to
+replay it via `python -m train.tools.replay`, you'll get a shape
+mismatch — same root cause as the obstacle gotcha. Wiring the rest of
+the tools through `kind`/`width`/`height`/`n_food` is the natural
+follow-up.
 
 ## Conventions
 - Branches: `main` (stable), `dev` (work), `feat/<topic>`. PR template at `.github/PULL_REQUEST_TEMPLATE.md` expects a Colab-style validation snippet (`!pip install -r requirements.txt` then `!python run_cpu.py ...`).

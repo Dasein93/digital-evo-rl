@@ -53,6 +53,11 @@ def evaluate(
     fps: int = 15,
     device: str = "cpu",
     n_obstacles: int = 0,
+    *,
+    kind: str = "mpe",
+    width: int = 20,
+    height: int = 20,
+    n_food: int = 0,
 ) -> Dict:
     os.makedirs(out_dir, exist_ok=True)
     ppos, manifest = load_checkpoint(ckpt_dir, device=device)
@@ -64,6 +69,7 @@ def evaluate(
     env = make_env(
         n_predators=n_predators, n_prey=n_prey, n_obstacles=n_obstacles,
         max_cycles=max_cycles, seed=seed, render_mode=render_mode,
+        kind=kind, width=width, height=height, n_food=n_food,
     )
 
     all_mean, all_pred, all_prey = [], [], []
@@ -141,6 +147,11 @@ def main() -> None:
     ap.add_argument("--record_first_n", type=int, default=0)
     ap.add_argument("--fps", type=int, default=15)
     ap.add_argument("--device", default="cpu")
+    ap.add_argument("--kind", default="mpe", choices=["mpe", "grid"],
+                    help="env backend; must match what the ckpt was trained on")
+    ap.add_argument("--width", type=int, default=20, help="grid env only")
+    ap.add_argument("--height", type=int, default=20, help="grid env only")
+    ap.add_argument("--n_food", type=int, default=0, help="grid env only")
     args = ap.parse_args()
     summary = evaluate(
         ckpt_dir=args.ckpt, out_dir=args.out,
@@ -149,6 +160,7 @@ def main() -> None:
         max_cycles=args.max_cycles, seed=args.seed,
         record_first_n=args.record_first_n, fps=args.fps, device=args.device,
         n_obstacles=args.n_obstacles,
+        kind=args.kind, width=args.width, height=args.height, n_food=args.n_food,
     )
     print(json.dumps({k: v for k, v in summary.items() if k != "manifest"}, indent=2))
 

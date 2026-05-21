@@ -9,8 +9,8 @@ Python-first project to explore **predator–prey** dynamics with **multi-agent 
 - **(Optional):** Jules for repo-wide PRs
 
 ## Project Status
-- **Phase:** 8 — Hall of Fame (evaluate mutants against historical opponents to break non-transitive cycling)
-- **Next Up:** per-layer mutation sigma; vec-env batching for Colab GPU; longer (50+ gen) runs with HoF for statistically meaningful arms-race plots
+- **Phase:** 9 — Custom grid-world env (configurable size, obstacles, **respawning food** for prey)
+- **Next Up:** wire grid env through coevolve/tournament/replay (currently only `run_cpu` + `eval` dispatch on `kind`); larger populations on the bigger arena; team-asymmetric obs
 - **Last Run:** see `docs/run_log.md`
 
 ## Structure
