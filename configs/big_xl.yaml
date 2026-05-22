@@ -1,0 +1,59 @@
+# Phase 12: scaled-up population (2x agents from big.yaml v2).
+#
+# 24 predators vs 24 prey on a 100x100 grid (10,000 cells -- 1.6x the
+# area of big.yaml's 80x80, with 4x the agents). Larger obstacle and
+# food counts (50 each) keep density roughly similar to big.yaml v2.
+#
+# obs_dim per agent = 3 + 3*(48-1) + 2*50 + 2*50 = 344
+# Heavier net (hidden=384, was 256) to fit the bigger obs.
+#
+# Reward shaping inherited from big.yaml v2 (the v1 zero-learning vs
+# v2 success comparison taught us step_cost matters more than scale):
+#   catch_reward=25  food_reward=15  step_cost=0.01  max_steps=300
+#
+# total_episodes=2000 instead of 5000 -- this config is a *seed* for
+# Phase 12 coevolve, not a full converged baseline. The whole pipeline
+# (PPO seed + 20-gen coevolve) should fit in ~2-3 hours.
+seed: 42
+env:
+  kind: grid
+  width: 100
+  height: 100
+  n_predators: 24
+  n_prey: 24
+  n_obstacles: 50
+  n_food: 50
+  max_steps: 300
+  catch_reward: 25.0
+  food_reward: 15.0
+  step_cost: 0.01
+train:
+  algo: ppo
+  total_episodes: 2000
+  device: cpu
+  num_threads: 2
+  gamma: 0.99
+  gae_lambda: 0.95
+  lr: 3.0e-4
+  batch_size: 4096
+  minibatch_size: 512
+  update_epochs: 4
+  clip_coef: 0.2
+  ent_coef: 0.02
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+  hidden: 384
+logging:
+  save_dir: artifacts/
+  csv: true
+  plots: true
+  plot_every: 50
+recording:
+  enabled: false
+checkpoint:
+  enabled: true
+  every: 200
+novelty:
+  enabled: false
+qd:
+  enabled: false

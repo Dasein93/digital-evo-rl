@@ -1,0 +1,42 @@
+# Seed config for the co-evolution demo.
+# Trains a quick PPO ckpt with obstacles so the BC space is richer.
+seed: 11
+env:
+  id: predator_prey_v0
+  n_predators: 2
+  n_prey: 2
+  n_obstacles: 2            # adds occluders; pushes agents into more varied trajectories
+  max_steps: 80
+train:
+  algo: ppo
+  total_episodes: 40
+  device: cpu
+  gamma: 0.99
+  gae_lambda: 0.95
+  lr: 3.0e-4
+  batch_size: 512
+  minibatch_size: 64
+  update_epochs: 3
+  clip_coef: 0.2
+  ent_coef: 0.02
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+  hidden: 64
+logging:
+  save_dir: artifacts/
+  csv: true
+  plots: true
+  plot_every: 20
+recording:
+  enabled: false
+  sample_rate: 1
+novelty:
+  enabled: true
+  capacity: 200
+  k: 10
+  bonus_coef: 0.05
+checkpoint:
+  enabled: true
+  every: 0
+qd:
+  enabled: false

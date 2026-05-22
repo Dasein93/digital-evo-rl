@@ -1,0 +1,56 @@
+# Phase 9 demo: large grid-world with obstacles and food.
+# - Arena: 40x40 = 1600 cells (~10x the effective area of MPE simple_tag's circle)
+# - Population: 4 predators vs 4 prey
+# - 12 static obstacles (walls)
+# - 12 respawning food items — gives prey something to do besides flee
+#
+# Rewards (per step, additive):
+#   predator: +catch_reward per prey it lands on
+#   prey:     -catch_reward per predator it lands on
+#   prey:     +food_reward per food it lands on (food respawns elsewhere)
+#   everyone: -step_cost (small pressure to act, not freeze)
+#
+# Recording on by default so the preview MP4 captures the ecosystem in motion.
+seed: 17
+env:
+  kind: grid
+  width: 40
+  height: 40
+  n_predators: 4
+  n_prey: 4
+  n_obstacles: 12
+  n_food: 12
+  max_steps: 150
+  catch_reward: 10.0
+  food_reward: 5.0
+  step_cost: 0.05
+train:
+  algo: ppo
+  total_episodes: 60
+  device: cpu
+  gamma: 0.99
+  gae_lambda: 0.95
+  lr: 3.0e-4
+  batch_size: 1024
+  minibatch_size: 128
+  update_epochs: 4
+  clip_coef: 0.2
+  ent_coef: 0.02
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+  hidden: 128
+logging:
+  save_dir: artifacts/
+  csv: true
+  plots: true
+  plot_every: 10
+recording:
+  enabled: true
+  sample_rate: 1
+novelty:
+  enabled: false
+checkpoint:
+  enabled: true
+  every: 0
+qd:
+  enabled: false
