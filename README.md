@@ -9,9 +9,11 @@ Python-first project to explore **predator–prey** dynamics with **multi-agent 
 - **(Optional):** Jules for repo-wide PRs
 
 ## Project Status
-- **Phase:** 0 — Foundation & Guardrails
-- **Next Up:** Phase 1 — Baseline PPO (env + CPU smoke test)
-- **Last Run:** _N/A_ (Phase 1 will populate)
+- **Phase:** 1 (PPO baseline) + Phase 2 (evolution hooks) — both functional
+- **Baseline PPO:** `run_cpu.py` — independent predator & prey policies on `simple_tag_v3`
+- **Evolution:** `run_evolve.py` — co-evolving populations with Gaussian mutation,
+  uniform/blend/layer crossover, tournament selection, optional novelty (k-NN) bonus
+- **Tests:** `tests/test_smoke.py` (7 cases, run via `make test`)
 
 ## Structure
 envs/ agents/ train/ tools/ configs/ artifacts/ tests/ docs/ .github/
@@ -27,7 +29,8 @@ envs/ agents/ train/ tools/ configs/ artifacts/ tests/ docs/ .github/
 !git clone https://github.com/<you>/digital-evo-rl.git
 %cd digital-evo-rl
 !pip install -r requirements.txt
-# Phase 1 will add run_cpu.py
+!python run_cpu.py     --config configs/base.yaml --episodes 200    # PPO baseline
+!python run_evolve.py  --config configs/base.yaml --generations 20   # GA / breeding
 
 ## Privacy
 
