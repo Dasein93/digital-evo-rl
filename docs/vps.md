@@ -105,8 +105,35 @@ rsync -avh stepan-vps:/opt/digital-evo-rl/runs/coevolve/ ./local_coev/
 | `HOF_K` | 0 | Hall of Fame size (0 = off; 3 is a good default) |
 | `HOF_EVAL_EPS` | 1 | episodes per HoF opponent |
 | `HOF_CURRENT_WEIGHT` | (unset) | 0..1 weight on current opponent (unset = equal weights — original behavior; 0.7-0.8 prevents promotion of mutants that lose to current but beat weak historicals) |
+| `KIND` | `mpe` | env backend; set to `grid` to coevolve on the grid env |
+| `WIDTH` `HEIGHT` `N_FOOD` | 20 / 20 / 0 | grid-env only |
+| `CATCH_REWARD` `FOOD_REWARD` `STEP_COST` | 10 / 5 / 0.05 | **must match the seed ckpt's training reward params** |
 | `SEED` | 2024 | RNG seed |
 | `OUT` | `runs/coevolve` | output dir |
+
+### Grid co-evolution on top of a long-run PPO ckpt
+
+Once a `runs/long_v2/run_*/checkpoints/final` exists (the v2 big.yaml
+PPO baseline), kick a coevolve loop seeded from it:
+
+```bash
+ssh stepan-vps "cd /opt/digital-evo-rl && \
+  tmux new-session -d -s evo_grid \
+    -e SEED_CKPT=runs/long_v2/run_20260521_201956/checkpoints/final \
+    -e OUT=runs/coev_grid \
+    -e LOG=logs/coev_grid.log \
+    -e KIND=grid -e WIDTH=80 -e HEIGHT=80 -e N_FOOD=30 \
+    -e CATCH_REWARD=25 -e FOOD_REWARD=15 -e STEP_COST=0.01 \
+    -e N_PRED=12 -e N_PREY=12 -e N_OBSTACLES=30 -e MAX_CYCLES=300 \
+    -e GENERATIONS=20 -e N_MUTANTS=15 -e SIGMA=0.15 -e EVAL_EPS=2 \
+    -e HOF_K=3 -e HOF_CURRENT_WEIGHT=0.7 \
+    ./scripts/run_worker.sh"
+```
+
+This continues the arms race from the v2 PPO baseline using mutation
++ HoF. Expect ~3-5 hours wall clock (20 gens × 15 mutants × 8 evals
+per mutant × 300 steps on 2 vCPU). Output `champion_tournament/` will
+show whether the evolved policies beat the v2 baseline.
 
 Example: a quick smoke run
 ```bash

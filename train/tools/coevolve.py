@@ -101,6 +101,12 @@ def _eval_mutant_worker(payload: Dict) -> Tuple[float, List[float]]:
         n_predators=payload["n_predators"], n_prey=payload["n_prey"],
         n_obstacles=payload["n_obstacles"], max_cycles=payload["max_cycles"],
         seed=payload["seed"],
+        kind=payload.get("kind", "mpe"),
+        width=payload.get("width", 20), height=payload.get("height", 20),
+        n_food=payload.get("n_food", 0),
+        catch_reward=payload.get("catch_reward", 10.0),
+        food_reward=payload.get("food_reward", 5.0),
+        step_cost=payload.get("step_cost", 0.05),
     )
     current_fit = 0.0
     hof_fits: List[float] = []
@@ -277,8 +283,18 @@ def _evolve_one_team(
     hof_eval_eps: int = 1,
     hof_current_weight: float | None = None,
     py_rng: random.Random | None = None,
+    *,
+    env_kwargs: Dict | None = None,
 ) -> Dict:
-    """One generation phase for one team. Returns the new champion's metadata."""
+    """One generation phase for one team. Returns the new champion's metadata.
+
+    ``env_kwargs`` holds backend-specific knobs that need to reach the
+    parallel-mutant workers via the JSON payload. For the grid backend
+    this is ``{kind, width, height, n_food, catch_reward, food_reward,
+    step_cost}``; an empty dict means the worker uses make_env defaults
+    (which is the MPE backend).
+    """
+    env_kwargs = env_kwargs or {}
     base_sd = deepcopy(ppos[target_team].ac.state_dict())
     opp_team = TEAM_PREY if target_team == TEAM_PREDATOR else TEAM_PREDATOR
     current_opp_sd = {k: v.detach().clone() for k, v in ppos[opp_team].ac.state_dict().items()}
@@ -322,6 +338,7 @@ def _evolve_one_team(
                 "n_predators": n_predators, "n_prey": n_prey,
                 "n_obstacles": n_obstacles, "max_cycles": max_cycles,
                 "eval_eps": eval_eps, "seed": seed + k * 17 + 1,
+                **env_kwargs,   # kind/width/height/n_food/catch_reward/food_reward/step_cost
             }
             for k, sd_k in enumerate(mutant_sds)
         ]
@@ -418,6 +435,14 @@ def coevolve(
     hof_k: int = 0,
     hof_eval_eps: int = 1,
     hof_current_weight: float | None = None,
+    *,
+    kind: str = "mpe",
+    width: int = 20,
+    height: int = 20,
+    n_food: int = 0,
+    catch_reward: float = 10.0,
+    food_reward: float = 5.0,
+    step_cost: float = 0.05,
 ) -> Dict:
     if num_threads is not None:
         set_num_threads(num_threads)
@@ -440,9 +465,14 @@ def coevolve(
                 return {"generations": start_gen - 1, "history": history, "resumed": True, "no_op": True}
 
     ppos, _ = load_checkpoint(ckpt_to_load, device=device)
+    env_kwargs = {
+        "kind": kind, "width": width, "height": height, "n_food": n_food,
+        "catch_reward": catch_reward, "food_reward": food_reward, "step_cost": step_cost,
+    }
     env = make_env(
         n_predators=n_predators, n_prey=n_prey, n_obstacles=n_obstacles,
         max_cycles=max_cycles, seed=seed,
+        **env_kwargs,
     )
 
     archives: Dict[Tuple[int, str], MAPElitesArchive] = {}
@@ -483,6 +513,7 @@ def coevolve(
                     hof=hof, hof_k=hof_k, hof_eval_eps=hof_eval_eps,
                     hof_current_weight=hof_current_weight,
                     py_rng=py_rng,
+                    env_kwargs=env_kwargs,
                 )
                 arch.save_manifest()
                 rec["generation"] = g
@@ -508,14 +539,17 @@ def coevolve(
         env.close()
 
     summary = _wrap_up(out_dir, archives, history, champion_ckpts, base_qd,
-                       n_predators, n_prey, n_obstacles, max_cycles, seed, device)
+                       n_predators, n_prey, n_obstacles, max_cycles, seed, device,
+                       env_kwargs=env_kwargs)
     return summary
 
 
 def _wrap_up(
     out_dir, archives, history, champion_ckpts, qd_cfg,
     n_predators, n_prey, n_obstacles, max_cycles, seed, device,
+    *, env_kwargs: Dict | None = None,
 ) -> Dict:
+    env_kwargs = env_kwargs or {}
     plots_dir = os.path.join(out_dir, "plots")
     os.makedirs(plots_dir, exist_ok=True)
 
@@ -552,6 +586,7 @@ def _wrap_up(
         out_dir=os.path.join(out_dir, "champion_tournament"),
         episodes=3, n_predators=n_predators, n_prey=n_prey, n_obstacles=n_obstacles,
         max_cycles=max_cycles, seed=seed + 99_991, device=device,
+        **env_kwargs,
     )
 
     summary = {
@@ -605,6 +640,19 @@ def main() -> None:
             "beating weak historicals while losing to current opponent."
         ),
     )
+    # Grid-env args. Must match what the seed_ckpt was trained on -- the
+    # PPO actor/critic shapes are baked in by obs_dim.
+    ap.add_argument("--kind", default="mpe", choices=["mpe", "grid"],
+                    help="env backend; must match seed_ckpt")
+    ap.add_argument("--width", type=int, default=20, help="grid env only")
+    ap.add_argument("--height", type=int, default=20, help="grid env only")
+    ap.add_argument("--n_food", type=int, default=0, help="grid env only")
+    ap.add_argument("--catch_reward", type=float, default=10.0,
+                    help="must match seed_ckpt's training reward")
+    ap.add_argument("--food_reward", type=float, default=5.0,
+                    help="grid env only")
+    ap.add_argument("--step_cost", type=float, default=0.05,
+                    help="must match seed_ckpt's training reward")
     args = ap.parse_args()
     s = coevolve(
         seed_ckpt_dir=args.seed_ckpt, out_dir=args.out,
@@ -615,6 +663,8 @@ def main() -> None:
         workers=args.workers, resume=args.resume, num_threads=args.num_threads,
         hof_k=args.hof_k, hof_eval_eps=args.hof_eval_eps,
         hof_current_weight=args.hof_current_weight,
+        kind=args.kind, width=args.width, height=args.height, n_food=args.n_food,
+        catch_reward=args.catch_reward, food_reward=args.food_reward, step_cost=args.step_cost,
     )
     print(json.dumps({k: v for k, v in s.items() if k not in {"history", "tournament_summary"}}, indent=2))
 

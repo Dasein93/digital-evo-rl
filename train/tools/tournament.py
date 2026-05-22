@@ -62,8 +62,21 @@ def _match(
     seed: int,
     device: str,
     n_obstacles: int = 0,
+    *,
+    kind: str = "mpe",
+    width: int = 20,
+    height: int = 20,
+    n_food: int = 0,
+    catch_reward: float = 10.0,
+    food_reward: float = 5.0,
+    step_cost: float = 0.05,
 ) -> Tuple[float, float]:
-    env = make_env(n_predators=n_predators, n_prey=n_prey, n_obstacles=n_obstacles, max_cycles=max_cycles, seed=seed)
+    env = make_env(
+        n_predators=n_predators, n_prey=n_prey, n_obstacles=n_obstacles,
+        max_cycles=max_cycles, seed=seed,
+        kind=kind, width=width, height=height, n_food=n_food,
+        catch_reward=catch_reward, food_reward=food_reward, step_cost=step_cost,
+    )
     ppos = {TEAM_PREDATOR: pred_ppo, TEAM_PREY: prey_ppo}
     pred_rets, prey_rets = [], []
     try:
@@ -101,6 +114,14 @@ def tournament(
     seed: int,
     device: str,
     n_obstacles: int = 0,
+    *,
+    kind: str = "mpe",
+    width: int = 20,
+    height: int = 20,
+    n_food: int = 0,
+    catch_reward: float = 10.0,
+    food_reward: float = 5.0,
+    step_cost: float = 0.05,
 ) -> Dict:
     os.makedirs(out_dir, exist_ok=True)
     # Pre-load every checkpoint just once.
@@ -122,6 +143,8 @@ def tournament(
                     n_predators=n_predators, n_prey=n_prey, n_obstacles=n_obstacles,
                     max_cycles=max_cycles, episodes=episodes,
                     seed=seed + 1000 * i + j, device=device,
+                    kind=kind, width=width, height=height, n_food=n_food,
+                    catch_reward=catch_reward, food_reward=food_reward, step_cost=step_cost,
                 )
                 pred_mat[i, j] = pr
                 prey_mat[i, j] = py
@@ -166,6 +189,17 @@ def main() -> None:
     ap.add_argument("--n_obstacles", type=int, default=0)
     ap.add_argument("--seed", type=int, default=99999)
     ap.add_argument("--device", default="cpu")
+    ap.add_argument("--kind", default="mpe", choices=["mpe", "grid"],
+                    help="env backend; must match what the ckpts were trained on")
+    ap.add_argument("--width", type=int, default=20, help="grid env only")
+    ap.add_argument("--height", type=int, default=20, help="grid env only")
+    ap.add_argument("--n_food", type=int, default=0, help="grid env only")
+    ap.add_argument("--catch_reward", type=float, default=10.0,
+                    help="must match training; v2 big.yaml uses 25")
+    ap.add_argument("--food_reward", type=float, default=5.0,
+                    help="grid env only; v2 big.yaml uses 15")
+    ap.add_argument("--step_cost", type=float, default=0.05,
+                    help="must match training; v2 big.yaml uses 0.01")
     args = ap.parse_args()
     s = tournament(
         pred_entries=_parse_entries(args.pred),
@@ -174,6 +208,8 @@ def main() -> None:
         episodes=args.episodes,
         n_predators=args.n_predators, n_prey=args.n_prey, n_obstacles=args.n_obstacles,
         max_cycles=args.max_cycles, seed=args.seed, device=args.device,
+        kind=args.kind, width=args.width, height=args.height, n_food=args.n_food,
+        catch_reward=args.catch_reward, food_reward=args.food_reward, step_cost=args.step_cost,
     )
     print(json.dumps({k: v for k, v in s.items() if "matrix" not in k}, indent=2))
 

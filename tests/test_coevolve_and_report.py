@@ -174,6 +174,72 @@ def test_hall_of_fame_grows_each_generation(trained_ckpt: Path, tmp_path: Path):
     assert all(x >= 2 for x in by_gen[3])       # HoF has at least 2 by gen 3
 
 
+def test_coevolve_runs_on_grid_env(tmp_path: Path):
+    """End-to-end: coevolve on a tiny grid env with food.
+
+    Trains a brief PPO seed on the grid env, then runs 2 generations of
+    coevolution against it. Catches regressions in the env_kwargs
+    plumbing (kind/width/height/n_food/reward args through coevolve,
+    its parallel worker payload, _evolve_one_team, and the final
+    cross-generation tournament).
+    """
+    import run_cpu
+    from train.tools.coevolve import coevolve
+    from agents.qd import MAPElitesConfig
+
+    # Train a grid seed ckpt inline.
+    cfg = tmp_path / "grid_seed.yaml"
+    cfg.write_text("""\
+seed: 0
+env:
+  kind: grid
+  width: 8
+  height: 8
+  n_predators: 1
+  n_prey: 1
+  n_obstacles: 1
+  n_food: 2
+  max_steps: 10
+  catch_reward: 25.0
+  food_reward: 15.0
+  step_cost: 0.01
+train:
+  algo: ppo
+  total_episodes: 2
+  device: cpu
+  hidden: 16
+  batch_size: 64
+  minibatch_size: 16
+  update_epochs: 1
+logging: {save_dir: artifacts/, plot_every: 1}
+recording: {enabled: false}
+checkpoint: {enabled: true, every: 0}
+qd: {enabled: false}
+novelty: {enabled: false}
+""")
+    out = Path(run_cpu.main(str(cfg), save_dir=str(tmp_path / "seed_runs")))
+    seed_ckpt = out / "checkpoints" / "final"
+    assert (seed_ckpt / "manifest.json").exists()
+
+    s = coevolve(
+        seed_ckpt_dir=str(seed_ckpt),
+        out_dir=str(tmp_path / "coev_grid"),
+        generations=2, n_mutants=2, sigma=0.3, eval_eps=1,
+        n_predators=1, n_prey=1, n_obstacles=1, max_cycles=10,
+        seed=77, device="cpu",
+        qd_cfg=MAPElitesConfig(grid_shape=(3, 3)),
+        kind="grid", width=8, height=8, n_food=2,
+        catch_reward=25.0, food_reward=15.0, step_cost=0.01,
+    )
+    assert s["generations"] == 2
+    coev = tmp_path / "coev_grid"
+    assert (coev / "gen_001" / "champion_checkpoint" / "manifest.json").exists()
+    assert (coev / "gen_002" / "champion_checkpoint" / "manifest.json").exists()
+    # The cross-gen tournament inside _wrap_up must also use grid env, else
+    # it would shape-mismatch the obs_dim=29 grid ckpt against a 14-dim MPE env.
+    assert (coev / "champion_tournament" / "tournament.csv").exists()
+
+
 def test_report_bundles_artifacts(trained_ckpt: Path, tmp_path: Path):
     """Report should be one self-contained HTML file with embedded images + JSON blocks."""
     from train.tools.report import build_report

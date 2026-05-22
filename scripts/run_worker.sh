@@ -36,6 +36,20 @@ NUM_THREADS="${NUM_THREADS:-1}"                               # per-process thre
 HOF_K="${HOF_K:-0}"                                           # Hall of Fame size per mutant (0 = off)
 HOF_EVAL_EPS="${HOF_EVAL_EPS:-1}"                             # eps per HoF opponent
 HOF_CURRENT_WEIGHT="${HOF_CURRENT_WEIGHT:-}"                  # weight on current opponent (0..1); empty = equal weights
+
+# --- env-backend knobs ---
+# KIND=mpe (default) ignores all the WIDTH/HEIGHT/N_FOOD/*_REWARD/STEP_COST args.
+# KIND=grid uses our custom grid-world. The reward params MUST match
+# what the seed ckpt was trained on (e.g. big.yaml v2: catch_reward=25,
+# food_reward=15, step_cost=0.01).
+KIND="${KIND:-mpe}"
+WIDTH="${WIDTH:-20}"
+HEIGHT="${HEIGHT:-20}"
+N_FOOD="${N_FOOD:-0}"
+CATCH_REWARD="${CATCH_REWARD:-10.0}"
+FOOD_REWARD="${FOOD_REWARD:-5.0}"
+STEP_COST="${STEP_COST:-0.05}"
+
 SEED="${SEED:-2024}"
 LOG="${LOG:-logs/coevolve.log}"
 
@@ -78,6 +92,8 @@ while true; do
     --workers "$WORKERS" --num_threads "$NUM_THREADS" \
     --hof_k "$HOF_K" --hof_eval_eps "$HOF_EVAL_EPS" \
     "${hof_w_arg[@]}" \
+    --kind "$KIND" --width "$WIDTH" --height "$HEIGHT" --n_food "$N_FOOD" \
+    --catch_reward "$CATCH_REWARD" --food_reward "$FOOD_REWARD" --step_cost "$STEP_COST" \
     --resume >> "$LOG" 2>&1
   rc=$?
 

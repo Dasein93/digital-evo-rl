@@ -86,15 +86,22 @@ succeed but the first forward pass will fail with a shape mismatch.
 Every tool that builds an env (`eval`, `evolve`, `tournament`,
 `coevolve`) accepts `--n_obstacles` for this reason; default is 0.
 
-### Grid-env plumbing — partial
-Phase 9 added the grid backend via `make_env(kind="grid", ...)`, but
-**only `run_cpu.py` and `train/tools/eval.py` are wired through**.
-`train/tools/{replay,evolve,tournament,coevolve}.py` still hard-code
-the MPE backend. If you train a checkpoint on the grid env and try to
-replay it via `python -m train.tools.replay`, you'll get a shape
-mismatch — same root cause as the obstacle gotcha. Wiring the rest of
-the tools through `kind`/`width`/`height`/`n_food` is the natural
-follow-up.
+### Grid-env plumbing
+- `run_cpu.py`, `train/tools/eval.py`, `train/tools/tournament.py`, and
+  `train/tools/coevolve.py` all accept the grid backend via
+  `kind="grid"` plus `width`/`height`/`n_food`/`catch_reward`/
+  `food_reward`/`step_cost`. Reward args matter — if you eval/coevolve
+  a ckpt with the wrong reward params, returns will silently shift to
+  whatever idle-floor matches the eval env's `step_cost * max_cycles`.
+- `train/tools/evolve.py` and `train/tools/replay.py` still hard-code
+  the MPE backend. Lower-priority follow-up: a ckpt trained on the
+  grid env can't be replayed by `python -m train.tools.replay` (would
+  shape-mismatch) — but `eval.py`'s `--record_first_n` covers most of
+  the same need.
+- `scripts/run_worker.sh` exposes `KIND` / `WIDTH` / `HEIGHT` / `N_FOOD`
+  / `CATCH_REWARD` / `FOOD_REWARD` / `STEP_COST` env vars for the
+  coevolve worker, so a grid coevolve is a `KIND=grid WIDTH=80 ...
+  tmux new-session` away.
 
 ## Conventions
 - Branches: `main` (stable), `dev` (work), `feat/<topic>`. PR template at `.github/PULL_REQUEST_TEMPLATE.md` expects a Colab-style validation snippet (`!pip install -r requirements.txt` then `!python run_cpu.py ...`).
